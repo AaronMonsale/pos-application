@@ -28,9 +28,9 @@ const Login = () => {
       if (docSnap.exists()) {
         const userData = docSnap.data();
         if (userData.role === "admin") {
-          router.replace("/(main)/dashboard");
+          router.replace("/(main)/admin");
         } else {
-          router.replace("/(main)/orders");
+          router.replace("/(main)/pos");
         }
       } else {
         Alert.alert("Error", "User data not found!");
