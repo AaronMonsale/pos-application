@@ -1,14 +1,24 @@
-import React from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, ScrollView, Dimensions } from 'react-native';
+import React, { useState, useEffect } from 'react';
+import { View, Text, StyleSheet, TouchableOpacity, ScrollView, Dimensions, Modal, FlatList } from 'react-native';
 import { Colors } from '../../constants/theme';
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { collection, getDocs, doc } from "firebase/firestore";
+import { db } from '../../firebase';
 
-const categories = [
-  'PIZZA', 'PASTA', 'DON', 'NASI', 'APPETIZER', 'SPECIAL DRINK',
-  'FRESH JUICE', 'COLD DRINK', 'FLOAT & MILKSHAKE', 'SODA & SQUASH'
-];
+interface Food {
+  id: string;
+  name: string;
+  price: number;
+  description: string;
+}
+
+interface Category {
+  id: string;
+  name: string;
+  foods: Food[];
+}
 
 const OrderItem = ({ name, price }: { name: string, price: string }) => (
   <View style={styles.orderItem}>
@@ -20,19 +30,63 @@ const OrderItem = ({ name, price }: { name: string, price: string }) => (
 const PosScreen = () => {
   const router = useRouter();
   const isTablet = Dimensions.get('window').width >= 768;
+  const [categories, setCategories] = useState<Category[]>([]);
+  const [selectedCategory, setSelectedCategory] = useState<Category | null>(null);
+  const [isModalVisible, setIsModalVisible] = useState(false);
+
+  useEffect(() => {
+    const fetchCategories = async () => {
+      const categoriesCollection = collection(db, 'categories');
+      const categoriesSnapshot = await getDocs(categoriesCollection);
+      const categoriesList = categoriesSnapshot.docs.map(doc => ({
+        id: doc.id,
+        name: doc.data().name,
+        foods: [],
+      })) as Category[];
+      setCategories(categoriesList);
+    };
+
+    fetchCategories();
+  }, []);
+
+  const handleCategoryPress = async (category: Category) => {
+    const categoryRef = doc(db, 'categories', category.id);
+    const foodsCollectionRef = collection(categoryRef, 'foods');
+    const foodsSnapshot = await getDocs(foodsCollectionRef);
+    const foodsList = foodsSnapshot.docs.map(foodDoc => {
+        const data = foodDoc.data();
+        return { 
+            id: foodDoc.id, 
+            name: data.name, 
+            price: data.price, 
+            description: data.description 
+        };
+    }) as Food[];
+
+    setSelectedCategory({ ...category, foods: foodsList });
+    setIsModalVisible(true);
+  };
 
   const navigateToSettings = () => {
     router.push('/(main)/pos-settings');
   };
+
+  const renderFoodItem = ({ item }: { item: Food }) => (
+    <View style={styles.foodItemContainer}>
+      <Text style={styles.foodItemName}>{item.name}</Text>
+      <Text style={styles.foodItemPrice}>${item.price.toFixed(2)}</Text>
+      <Text style={styles.foodItemDescription}>{item.description}</Text>
+    </View>
+  );
 
   const mainContent = (
     <View style={styles.mainContent}>
       <View style={styles.categoriesContainer}>
         <ScrollView>
           <View style={styles.categoriesGrid}>
-            {categories.map((category, index) => (
-              <TouchableOpacity key={index} style={styles.categoryTile}>
-                <Text style={styles.categoryText}>{category}</Text>
+            {categories.map((category) => (
+              <TouchableOpacity key={category.id} style={styles.categoryTile} onPress={() => handleCategoryPress(category)}>
+                <Text style={styles.categoryText}>{category.name}</Text>
               </TouchableOpacity>
             ))}
           </View>
@@ -72,6 +126,32 @@ const PosScreen = () => {
 
   return (
     <SafeAreaView style={styles.container}>
+        <Modal
+            animationType="slide"
+            transparent={true}
+            visible={isModalVisible}
+            onRequestClose={() => {
+                setIsModalVisible(!isModalVisible);
+            }}
+        >
+            <View style={styles.centeredView}>
+                <View style={styles.modalView}>
+                    <Text style={styles.modalTitle}>{selectedCategory?.name}</Text>
+                    <FlatList
+                        data={selectedCategory?.foods}
+                        renderItem={renderFoodItem}
+                        keyExtractor={item => item.id}
+                    />
+                    <TouchableOpacity
+                        style={[styles.button, styles.buttonClose]}
+                        onPress={() => setIsModalVisible(!isModalVisible)}
+                    >
+                        <Text style={styles.textStyle}>Close</Text>
+                    </TouchableOpacity>
+                </View>
+            </View>
+        </Modal>
+
       <View style={styles.header}>
         <Text style={styles.logo}>ONECORE</Text>
         <TouchableOpacity onPress={navigateToSettings}>
@@ -220,6 +300,64 @@ const styles = StyleSheet.create({
     payButtonText: {
         color: 'white',
         fontWeight: 'bold',
+    },
+    centeredView: {
+        flex: 1,
+        justifyContent: "center",
+        alignItems: "center",
+        marginTop: 22
+    },
+    modalView: {
+        margin: 20,
+        backgroundColor: "white",
+        borderRadius: 20,
+        padding: 35,
+        alignItems: "center",
+        shadowColor: "#000",
+        shadowOffset: {
+            width: 0,
+            height: 2
+        },
+        shadowOpacity: 0.25,
+        shadowRadius: 4,
+        elevation: 5
+    },
+    button: {
+        borderRadius: 20,
+        padding: 10,
+        elevation: 2
+    },
+    buttonClose: {
+        backgroundColor: "#2196F3",
+    },
+    textStyle: {
+        color: "white",
+        fontWeight: "bold",
+        textAlign: "center"
+    },
+    modalTitle: {
+        fontSize: 20,
+        fontWeight: 'bold',
+        marginBottom: 15,
+        textAlign: "center"
+    },
+    foodItemContainer: {
+        padding: 10,
+        borderBottomWidth: 1,
+        borderBottomColor: '#eee',
+        width: '100%'
+    },
+    foodItemName: {
+        fontSize: 18,
+        fontWeight: 'bold'
+    },
+    foodItemPrice: {
+        fontSize: 16,
+        color: 'green'
+    },
+    foodItemDescription: {
+        fontSize: 14,
+        color: 'gray'
     }
 });
 
