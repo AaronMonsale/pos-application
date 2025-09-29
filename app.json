@@ -1,10 +1,10 @@
 {
   "expo": {
-    "name": "pos-application",
+    "name": "Onecore Consultancy POS",
     "slug": "pos-application",
     "version": "1.0.0",
     "orientation": "portrait",
-    "icon": "./assets/images/icon.png",
+    "icon": "./assets/images/onecore_consultancy_inc_logo.jpg",
     "scheme": "posapplication",
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,

@@ -1,21 +1,27 @@
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from "expo-router";
 import React from "react";
-import { Image, StyleSheet, Text, TouchableOpacity, View } from "react-native";
+import { Image, ScrollView, StyleSheet, Text, TouchableOpacity, View, useWindowDimensions } from "react-native";
 import { Colors } from "../../constants/theme";
 
 const modules = [
   { name: "User & Role", icon: "people-outline" as const, route: "/(main)/user-role" },
   { name: "Menu", icon: "restaurant-outline" as const, route: "/(main)/menu" },
+  { name: "Transactions", icon: "cash-outline" as const, route: "/(main)/transactions" },
   { name: "Reports & Analytics", icon: "stats-chart-outline" as const, route: "/(main)/reports-analytics" },
   { name: "System Settings", icon: "settings-outline" as const, route: "/(main)/system-settings" },
+  { name: "Discount", icon: "pricetag-outline" as const, route: "/(main)/discount" },
 ];
 
 const AdminDashboard = () => {
   const router = useRouter();
+  const { width, height } = useWindowDimensions();
+  const isLandscape = width > height;
+
+  const Container = isLandscape ? ScrollView : View;
 
   return (
-    <View style={styles.container}>
+    <Container style={isLandscape ? styles.scrollContainer : styles.container} contentContainerStyle={isLandscape ? {alignItems: 'center'} : {}}>
       <Image source={require('../../assets/images/onecore_consultancy_inc_logo.jpg')} style={styles.logo} />
       <Text style={styles.headerText}>ADMIN DASHBOARD</Text>
       <View style={styles.tilesContainer}>
@@ -26,7 +32,7 @@ const AdminDashboard = () => {
           </TouchableOpacity>
         ))}
       </View>
-    </View>
+    </Container>
   );
 };
 
@@ -36,6 +42,11 @@ const styles = StyleSheet.create({
     padding: 16,
     backgroundColor: Colors.light.background,
     alignItems: 'center',
+    justifyContent: 'center',
+  },
+  scrollContainer: {
+    padding: 16,
+    backgroundColor: Colors.light.background,
   },
   logo: {
     width: 250,

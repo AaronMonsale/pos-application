@@ -1,11 +1,11 @@
 
-import { View, Text, TextInput, Alert, Image, StyleSheet, TouchableOpacity } from "react-native";
-import React, { useState } from "react";
-import { signInWithEmailAndPassword } from "firebase/auth";
-import { auth, db } from "../../firebase";
-import { doc, getDoc } from "firebase/firestore";
 import { useRouter } from "expo-router";
+import { signInWithEmailAndPassword } from "firebase/auth";
+import { doc, getDoc } from "firebase/firestore";
+import React, { useState } from "react";
+import { Alert, Image, StyleSheet, Text, TextInput, TouchableOpacity, View } from "react-native";
 import { Colors } from '../../constants/theme';
+import { auth, db } from "../../firebase";
 
 const Login = () => {
   const [email, setEmail] = useState("");
@@ -80,7 +80,6 @@ const styles = StyleSheet.create({
     width: 200,
     height: 100,
     alignSelf: "center",
-    marginBottom: 24,
     resizeMode: 'contain',
   },
   title: {

@@ -1,48 +1,51 @@
 import DateTimePicker from '@react-native-community/datetimepicker';
-import React, { useState, useEffect } from 'react';
-import { Dimensions, Platform, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { collection, doc, getDocs, query, Timestamp, where } from "firebase/firestore";
+import React, { useEffect, useMemo, useState } from 'react';
+import { Alert, Platform, ScrollView, StyleSheet, Text, TouchableOpacity, useWindowDimensions, View } from 'react-native';
 import { BarChart, LineChart, PieChart } from 'react-native-chart-kit';
 import RNPickerSelect from 'react-native-picker-select';
 import { Colors } from '../../constants/theme';
-import { collection, getDocs, doc } from "firebase/firestore";
 import { db } from "../../firebase";
 
-const screenWidth = Dimensions.get("window").width;
-
 const chartConfig = {
+  backgroundColor: "#fff",
   backgroundGradientFrom: "#fff",
   backgroundGradientTo: "#fff",
-  color: (opacity = 1) => `rgba(0, 0, 0, ${opacity})`,
-  strokeWidth: 2, // optional, default 3
+  decimalPlaces: 2,
+  color: (opacity = 1) => `rgba(26, 95, 180, ${opacity})`,
+  labelColor: (opacity = 1) => `rgba(0, 0, 0, ${opacity})`,
+  style: {
+    borderRadius: 16,
+  },
+  propsForDots: {
+    r: "6",
+    strokeWidth: "2",
+    stroke: "#023e8a",
+  },
   barPercentage: 0.5,
-  useShadowColorFromDataset: false // optional
 };
-
-const data = {
-  labels: ["Jan", "Feb", "Mar", "Apr", "May", "Jun"],
-  datasets: [
-    {
-      data: [20, 45, 28, 80, 99, 43],
-      color: (opacity = 1) => `rgba(134, 65, 244, ${opacity})`, // optional
-      strokeWidth: 2 // optional
-    }
-  ],
-};
-
-const pieChartData = [
-  { name: "Seoul", population: 21500000, color: "rgba(131, 167, 234, 1)", legendFontColor: "#7F7F7F", legendFontSize: 15 },
-  { name: "Toronto", population: 2800000, color: "#F00", legendFontColor: "#7F7F7F", legendFontSize: 15 },
-  { name: "Beijing", population: 527612, color: "red", legendFontColor: "#7F7F7F", legendFontSize: 15 },
-  { name: "New York", population: 8538000, color: "#ffffff", legendFontColor: "#7F7F7F", legendFontSize: 15 },
-  { name: "Moscow", population: 11920000, color: "rgb(0, 0, 255)", legendFontColor: "#7F7F7F", legendFontSize: 15 }
-];
 
 interface PickerItem {
     label: string;
     value: string;
-  }
+}
+
+interface Transaction {
+    id: string;
+    items: { name: string; price: number }[];
+    subtotal: number;
+    tax: number;
+    serviceCharge: number;
+    total: number;
+    createdAt: Timestamp;
+    currency: string;
+}
 
 const ReportsAnalytics = () => {
+  const { width, height } = useWindowDimensions();
+  const isLandscape = width > height;
+  const screenWidth = width;
+
   const [chartType, setChartType] = useState('Bar');
   const [fromDate, setFromDate] = useState(new Date());
   const [toDate, setToDate] = useState(new Date());
@@ -50,36 +53,179 @@ const ReportsAnalytics = () => {
   const [showToDatePicker, setShowToDatePicker] = useState(false);
   const [topSellingCategory, setTopSellingCategory] = useState<string | null>(null);
   const [topSellingFood, setTopSellingFood] = useState<string | null>(null);
-  const [totalSales, setTotalSales] = useState(5450.75); // Dummy data
   const [categories, setCategories] = useState<PickerItem[]>([]);
   const [foods, setFoods] = useState<PickerItem[]>([]);
+  const [transactions, setTransactions] = useState<Transaction[]>([]);
 
   useEffect(() => {
-    const fetchCategories = async () => {
-      const categoriesCollection = collection(db, 'categories');
-      const categoriesSnapshot = await getDocs(categoriesCollection);
-      const categoriesList: PickerItem[] = categoriesSnapshot.docs.map(doc => ({ label: doc.data().name, value: doc.id }));
-      setCategories(categoriesList);
-    };
-
+    fetchTransactions();
     fetchCategories();
   }, []);
 
   useEffect(() => {
-    const fetchFoods = async () => {
-        if (topSellingCategory) {
-            const categoryRef = doc(db, 'categories', topSellingCategory);
-            const foodsCollectionRef = collection(categoryRef, 'foods');
-            const foodsSnapshot = await getDocs(foodsCollectionRef);
-            const foodsList: PickerItem[] = foodsSnapshot.docs.map(doc => ({ label: doc.data().name, value: doc.id }));
-            setFoods(foodsList);
-        } else {
-            setFoods([]);
-        }
-      };
+    fetchTransactions();
+  }, [fromDate, toDate]);
 
-    fetchFoods();
+  useEffect(() => {
+    if (topSellingCategory) {
+        fetchFoods();
+    } else {
+        setFoods([]);
+    }
   }, [topSellingCategory]);
+
+  const fetchCategories = async () => {
+    const categoriesCollection = collection(db, 'categories');
+    const categoriesSnapshot = await getDocs(categoriesCollection);
+    const categoriesList: PickerItem[] = categoriesSnapshot.docs.map(doc => ({ label: doc.data().name, value: doc.id }));
+    setCategories(categoriesList);
+  };
+
+  const fetchFoods = async () => {
+    if (topSellingCategory) {
+        const categoryRef = doc(db, 'categories', topSellingCategory);
+        const foodsCollectionRef = collection(categoryRef, 'foods');
+        const foodsSnapshot = await getDocs(foodsCollectionRef);
+        const foodsList: PickerItem[] = foodsSnapshot.docs.map(doc => ({ label: doc.data().name, value: doc.id }));
+        setFoods(foodsList);
+    }
+  };
+
+  const fetchTransactions = async () => {
+    try {
+        const startOfDay = new Date(fromDate);
+        startOfDay.setHours(0, 0, 0, 0);
+        const endOfDay = new Date(toDate);
+        endOfDay.setHours(23, 59, 59, 999);
+
+        const transactionsRef = collection(db, 'transactions');
+        const q = query(
+            transactionsRef,
+            where('createdAt', '>=', Timestamp.fromDate(startOfDay)),
+            where('createdAt', '<=', Timestamp.fromDate(endOfDay))
+        );
+
+        const querySnapshot = await getDocs(q);
+        const fetchedTransactions = querySnapshot.docs.map(doc => ({
+            id: doc.id,
+            ...doc.data(),
+        })) as Transaction[];
+
+        setTransactions(fetchedTransactions);
+    } catch (error) {
+        console.error("Error fetching transactions: ", error);
+        Alert.alert("Error", "Could not fetch transactions.");
+    }
+  };
+  
+  const { totalSales, totalServiceCharge } = useMemo(() => {
+    let sales = 0;
+    let serviceCharge = 0;
+    const foodNamesInCategory = foods.map(f => f.label);
+
+    if (topSellingFood) {
+        const selectedFoodLabel = foods.find(f => f.value === topSellingFood)?.label;
+        transactions.forEach(t => {
+            t.items.forEach(item => {
+                if (item.name === selectedFoodLabel) {
+                    sales += item.price;
+                }
+            });
+        });
+    } else if (topSellingCategory) {
+        transactions.forEach(t => {
+            t.items.forEach(item => {
+                if (foodNamesInCategory.includes(item.name)) {
+                    sales += item.price;
+                }
+            });
+        });
+    } else {
+        sales = transactions.reduce((acc, curr) => acc + curr.total, 0);
+        serviceCharge = transactions.reduce((acc, curr) => acc + (curr.serviceCharge || 0), 0);
+    }
+    return { totalSales: sales, totalServiceCharge: serviceCharge };
+  }, [transactions, topSellingCategory, topSellingFood, foods]);
+
+  const chartData = useMemo(() => {
+    const data: { [key: string]: number } = {};
+    const foodNamesInCategory = foods.map(f => f.label);
+    const selectedFoodLabel = foods.find(f => f.value === topSellingFood)?.label;
+
+    transactions.forEach(transaction => {
+        const date = transaction.createdAt.toDate().toLocaleDateString();
+        let salesForDate = 0;
+
+        if (topSellingFood && selectedFoodLabel) {
+            transaction.items.forEach(item => {
+                if (item.name === selectedFoodLabel) {
+                    salesForDate += item.price;
+                }
+            });
+        } else if (topSellingCategory) {
+            transaction.items.forEach(item => {
+                if (foodNamesInCategory.includes(item.name)) {
+                    salesForDate += item.price;
+                }
+            });
+        } else {
+            salesForDate = transaction.total;
+        }
+
+        if (salesForDate > 0) {
+            data[date] = (data[date] || 0) + salesForDate;
+        }
+    });
+
+    const labels = Object.keys(data);
+    const dataPoints = Object.values(data);
+
+    if (labels.length === 0) {
+        return {
+            labels: ['No Data'],
+            datasets: [{ data: [0] }]
+        };
+    }
+
+    return {
+        labels,
+        datasets: [{ data: dataPoints }]
+    };
+}, [transactions, topSellingCategory, topSellingFood, foods]);
+
+const pieChartData = useMemo(() => {
+    const foodNamesInCategory = foods.map(f => f.label);
+    const selectedFoodLabel = foods.find(f => f.value === topSellingFood)?.label;
+
+    const itemsToConsider = transactions.flatMap(t => t.items).filter(item => {
+        if (selectedFoodLabel) {
+            return item.name === selectedFoodLabel;
+        }
+        if (topSellingCategory) {
+            return foodNamesInCategory.includes(item.name);
+        }
+        return true;
+    });
+    
+    if (itemsToConsider.length === 0) {
+        return [{ name: "No Data", population: 1, color: "#ccc", legendFontColor: "#7F7F7F", legendFontSize: 15 }];
+    }
+
+    const salesByFood = itemsToConsider.reduce((acc, item) => {
+        acc[item.name] = (acc[item.name] || 0) + item.price;
+        return acc;
+    }, {} as { [key: string]: number });
+
+    const colors = ["#FF6384", "#36A2EB", "#FFCE56", "#4BC0C0", "#9966FF", "#FF9F40"];
+
+    return Object.keys(salesByFood).map((key, index) => ({
+        name: key,
+        population: salesByFood[key],
+        color: colors[index % colors.length],
+        legendFontColor: "#7F7F7F",
+        legendFontSize: 15
+    }));
+}, [transactions, topSellingCategory, topSellingFood, foods]);
 
   const currentYear = new Date().getFullYear();
   const minimumDate = new Date(currentYear, 0, 1);
@@ -103,56 +249,58 @@ const ReportsAnalytics = () => {
   };
 
   const renderChart = () => {
+    const chartWidth = isLandscape ? (width * 3 / 5) - 40 : screenWidth - 32;
     switch (chartType) {
       case 'Bar':
-        return <BarChart style={styles.chart} data={data} width={screenWidth - 32} height={220} yAxisLabel="" yAxisSuffix="" chartConfig={chartConfig} verticalLabelRotation={30} />;
+        return <BarChart style={styles.chart} data={chartData} width={chartWidth} height={220} yAxisLabel="₱" yAxisSuffix="" chartConfig={chartConfig} verticalLabelRotation={30} fromZero />;
       case 'Line':
-        return <LineChart style={styles.chart} data={data} width={screenWidth - 32} height={220} yAxisLabel="" yAxisSuffix="" chartConfig={chartConfig} />;
+        return <LineChart style={styles.chart} data={chartData} width={chartWidth} height={220} yAxisLabel="₱" yAxisSuffix="" chartConfig={chartConfig} fromZero bezier />;
       case 'Pie':
-        return <PieChart data={pieChartData} width={screenWidth - 32} height={220} chartConfig={chartConfig} accessor={"population"} backgroundColor={"transparent"} paddingLeft={"15"} absolute />;
+        return <PieChart data={pieChartData} width={chartWidth} height={220} chartConfig={chartConfig} accessor={"population"} backgroundColor={"transparent"} paddingLeft={"15"} absolute />;
       default:
         return null;
     }
   }
 
-  return (
-    <ScrollView style={styles.container}>
-      <View style={styles.filterContainer}>
-        <Text style={styles.filterTitle}>Date Range:</Text>
-        <View style={styles.dateFilterContainer}>
-          <TouchableOpacity onPress={() => setShowFromDatePicker(true)} style={styles.dateButton}>
-            <Text style={styles.dateButtonText}>{`From: ${fromDate.toLocaleDateString()}`}</Text>
-          </TouchableOpacity>
-          <Text style={styles.dateSeparator}> {'>'} </Text>
-          <TouchableOpacity onPress={() => setShowToDatePicker(true)} style={styles.dateButton}>
-            <Text style={styles.dateButtonText}>{`To: ${toDate.toLocaleDateString()}`}</Text>
-          </TouchableOpacity>
-        </View>
-        {showFromDatePicker && (
-          <DateTimePicker
-            testID="fromDatePicker"
-            value={fromDate}
-            mode={"date"}
-            display="default"
-            onChange={onFromDateChange}
-            minimumDate={minimumDate}
-            maximumDate={maximumDate}
-          />
-        )}
-        {showToDatePicker && (
-          <DateTimePicker
-            testID="toDatePicker"
-            value={toDate}
-            mode={"date"}
-            display="default"
-            onChange={onToDateChange}
-            minimumDate={minimumDate}
-            maximumDate={maximumDate}
-          />
-        )}
+  const DateRangePicker = () => (
+    <View style={styles.filterContainer}>
+      <Text style={styles.filterTitle}>Date Range:</Text>
+      <View style={styles.dateFilterContainer}>
+        <TouchableOpacity onPress={() => setShowFromDatePicker(true)} style={styles.dateButton}>
+          <Text style={styles.dateButtonText}>{`From: ${fromDate.toLocaleDateString()}`}</Text>
+        </TouchableOpacity>
+        <Text style={styles.dateSeparator}> {'>'} </Text>
+        <TouchableOpacity onPress={() => setShowToDatePicker(true)} style={styles.dateButton}>
+          <Text style={styles.dateButtonText}>{`To: ${toDate.toLocaleDateString()}`}</Text>
+        </TouchableOpacity>
       </View>
+      {showFromDatePicker && (
+        <DateTimePicker
+          testID="fromDatePicker"
+          value={fromDate}
+          mode={"date"}
+          display="default"
+          onChange={onFromDateChange}
+          minimumDate={minimumDate}
+          maximumDate={maximumDate}
+        />
+      )}
+      {showToDatePicker && (
+        <DateTimePicker
+          testID="toDatePicker"
+          value={toDate}
+          mode={"date"}
+          display="default"
+          onChange={onToDateChange}
+          minimumDate={minimumDate}
+          maximumDate={maximumDate}
+        />
+      )}
+    </View>
+  );
 
-      <View style={styles.filterContainer}>
+  const TopSellingFilter = () => (
+    <View style={styles.filterContainer}>
         <Text style={styles.filterTitle}>Top Selling:</Text>
         <RNPickerSelect
             onValueChange={handleCategoryChange}
@@ -168,42 +316,79 @@ const ReportsAnalytics = () => {
             disabled={!topSellingCategory}
             value={topSellingFood}
         />
-      </View>
+    </View>
+  );
 
-      <View style={styles.totalSalesContainer}>
-        <Text style={styles.totalSalesTitle}>Total Sales</Text>
-        <Text style={styles.totalSalesAmount}>${totalSales.toLocaleString()}</Text>
-      </View>
+  const TotalSales = () => (
+      <>
+        <View style={styles.totalSalesContainer}>
+            <Text style={styles.totalSalesTitle}>Total Sales</Text>
+            <Text style={styles.totalSalesAmount}>₱{totalSales.toLocaleString()}</Text>
+        </View>
+        <View style={styles.totalSalesContainer}>
+            <Text style={styles.totalSalesTitle}>Total Service Charge</Text>
+            <Text style={styles.totalSalesAmount}>₱{totalServiceCharge.toLocaleString()}</Text>
+        </View>
+      </>
+  );
 
-      <View style={styles.chartTypeContainer}>
-        <TouchableOpacity
-          style={[styles.chartTypeButton, chartType === 'Bar' && styles.selectedChartType]}
-          onPress={() => setChartType('Bar')}
-        >
-          <Text style={[styles.chartTypeText, chartType === 'Bar' && styles.selectedChartTypeText]}>Bar</Text>
-        </TouchableOpacity>
-        <TouchableOpacity
-          style={[styles.chartTypeButton, chartType === 'Line' && styles.selectedChartType]}
-          onPress={() => setChartType('Line')}
-        >
-          <Text style={[styles.chartTypeText, chartType === 'Line' && styles.selectedChartTypeText]}>Line</Text>
-        </TouchableOpacity>
-        <TouchableOpacity
-          style={[styles.chartTypeButton, chartType === 'Pie' && styles.selectedChartType]}
-          onPress={() => setChartType('Pie')}
-        >
-          <Text style={[styles.chartTypeText, chartType === 'Pie' && styles.selectedChartTypeText]}>Pie</Text>
-        </TouchableOpacity>
-      </View>
+  const Chart = () => (
+      <>
+        <View style={styles.chartTypeContainer}>
+            <TouchableOpacity
+            style={[styles.chartTypeButton, chartType === 'Bar' && styles.selectedChartType]}
+            onPress={() => setChartType('Bar')}
+            >
+            <Text style={[styles.chartTypeText, chartType === 'Bar' && styles.selectedChartTypeText]}>Bar</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+            style={[styles.chartTypeButton, chartType === 'Line' && styles.selectedChartType]}
+            onPress={() => setChartType('Line')}
+            >
+            <Text style={[styles.chartTypeText, chartType === 'Line' && styles.selectedChartTypeText]}>Line</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+            style={[styles.chartTypeButton, chartType === 'Pie' && styles.selectedChartType]}
+            onPress={() => setChartType('Pie')}
+            >
+            <Text style={[styles.chartTypeText, chartType === 'Pie' && styles.selectedChartTypeText]}>Pie</Text>
+            </TouchableOpacity>
+        </View>
 
-      <View style={styles.chartContainer}>
-        {renderChart()}
-      </View>
+        <View style={styles.chartContainer}>
+            {renderChart()}
+        </View>
+    </>
+  )
 
-      <TouchableOpacity style={styles.downloadButton}>
-        <Text style={styles.downloadButtonText}>Download Report</Text>
-      </TouchableOpacity>
-    </ScrollView>
+  return (
+    <View style={{flex: 1, backgroundColor: Colors.light.background}}>
+        {isLandscape ? (
+            <View style={styles.landscapeLayout}>
+                <ScrollView style={styles.leftPane}>
+                    <TotalSales />
+                    <Chart />
+                </ScrollView>
+                <ScrollView style={styles.rightPane}>
+                    <DateRangePicker />
+                    <TopSellingFilter />
+                    <TouchableOpacity style={styles.downloadButton}>
+                        <Text style={styles.downloadButtonText}>Download Report</Text>
+                    </TouchableOpacity>
+                </ScrollView>
+            </View>
+        ) : (
+            <ScrollView style={styles.container}>
+                <DateRangePicker />
+                <TopSellingFilter />
+                <TotalSales />
+                <Chart />
+                <TouchableOpacity style={styles.downloadButton}>
+                    <Text style={styles.downloadButtonText}>Download Report</Text>
+                </TouchableOpacity>
+            </ScrollView>
+        )}
+    </View>
   );
 };
 
@@ -212,6 +397,20 @@ const styles = StyleSheet.create({
     flex: 1,
     padding: 16,
     backgroundColor: Colors.light.background,
+  },
+  landscapeLayout: {
+    flexDirection: 'row',
+    flex: 1,
+  },
+  leftPane: {
+    flex: 3,
+    padding: 16,
+  },
+  rightPane: {
+    flex: 2,
+    padding: 16,
+    borderLeftWidth: 1,
+    borderColor: '#ccc',
   },
   filterContainer: {
     marginBottom: 24,
@@ -272,12 +471,15 @@ const styles = StyleSheet.create({
   },
   chart: {
     borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#E0E0E0',
   },
   downloadButton: {
     backgroundColor: Colors.light.tint,
     paddingVertical: 16,
     borderRadius: 8,
     alignItems: 'center',
+    marginBottom: 45,
   },
   downloadButtonText: {
     color: '#fff',
