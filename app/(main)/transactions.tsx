@@ -99,7 +99,7 @@ const TransactionsScreen = () => {
                     <Text key={index} style={styles.itemText}>{food.name} - {item.currency}{food.price.toFixed(2)}</Text>
                 ))}
             </View>
-            {item.discount && item.discount > 0 && (
+            {item.discount !== undefined && item.discount > 0 && (
                 <Text style={styles.discountText}>Discount Applied!</Text>
             )}
             <Text style={styles.total}>Total: {item.currency}{item.total.toFixed(2)}</Text>
@@ -167,7 +167,7 @@ const TransactionsScreen = () => {
                             {selectedTransaction.serviceCharge > 0 && (
                                 <Text style={styles.modalText}>Service Charge: {selectedTransaction.currency}{selectedTransaction.serviceCharge.toFixed(2)}</Text>
                             )}
-                            {selectedTransaction.discount && selectedTransaction.discount > 0 && (
+                            {selectedTransaction.discount !== undefined && selectedTransaction.discount > 0 && (
                                 <Text style={styles.modalText}>Discount: -{selectedTransaction.currency}{selectedTransaction.discount.toFixed(2)}</Text>
                             )}
                             <Text style={styles.modalTotal}>Total: {selectedTransaction.currency}{selectedTransaction.total.toFixed(2)}</Text>
