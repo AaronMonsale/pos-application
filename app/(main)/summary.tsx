@@ -10,22 +10,27 @@ const SummaryScreen = () => {
     const params = useLocalSearchParams();
     const { orderItems, subtotal, tax, serviceCharge, discountAmount, total, staffName } = params;
 
-    // The orderItems are passed as a string, so we need to parse them back into an array of objects
     const items = JSON.parse(orderItems as string);
     
     const handlePrint = () => {
-        // This is a placeholder for the actual print logic
         Alert.alert("Print Invoice", "This will print the invoice.");
     }
 
     const handleDone = () => {
-        router.back(); // Go back to the main POS screen without clearing the navigation stack
+        router.back();
     }
 
     const renderOrderItem = ({ item }: { item: any }) => (
         <View style={styles.itemRow}>
-            <Text style={styles.itemName}>{item.name} x{item.quantity}</Text>
-            <Text style={styles.itemTotal}>₱{(item.price * item.quantity).toFixed(2)}</Text>
+            <View>
+                <Text style={styles.itemName}>{item.name} x{item.quantity}</Text>
+                {item.discount && item.discount > 0 && (
+                    <Text style={styles.itemDiscount}>
+                        Discount: {item.discount}%
+                    </Text>
+                )}
+            </View>
+            <Text style={styles.itemTotal}>₱{item.total.toFixed(2)}</Text>
         </View>
     );
 
@@ -120,9 +125,15 @@ const styles = StyleSheet.create({
         paddingVertical: 10,
         borderBottomWidth: 1,
         borderBottomColor: '#eee',
+        alignItems: 'center',
     },
     itemName: {
         fontSize: 16,
+        fontWeight: '500',
+    },
+    itemDiscount: {
+        fontSize: 14,
+        color: 'green',
     },
     itemTotal: {
         fontSize: 16,
@@ -145,6 +156,7 @@ const styles = StyleSheet.create({
     discountText: {
         fontSize: 16,
         color: 'red',
+        fontWeight: 'bold',
     },
     totalRow: {
         flexDirection: 'row',

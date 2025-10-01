@@ -375,6 +375,7 @@ const PosScreen = () => {
         <View style={styles.sidebar}>
             <Image source={require('../../assets/images/onecore_consultancy_inc_logo.jpg')} style={styles.sidebarLogo} />
             <TouchableOpacity style={styles.sidebarItem} onPress={() => setIsSidebarVisible(false)}><Text style={styles.sidebarLink}>POS</Text></TouchableOpacity>
+            <TouchableOpacity style={styles.sidebarItem} onPress={() => {setIsModalVisible(false); router.push('/(main)/tables');}}><Text style={styles.sidebarLink}>Tables</Text></TouchableOpacity>
             <TouchableOpacity
                 style={[styles.sidebarItem, !isSystemLocked && styles.disabledView]}
                 onPress={() => { if (isSystemLocked) { setIsSidebarVisible(false); router.push('/(main)/staff'); } }}
@@ -399,6 +400,11 @@ const PosScreen = () => {
           </View>
       </Modal>
   )
+    
+  const applicableDiscounts = selectedOrderItem ? discounts.filter(d =>
+    d.type === 'Food' && d.foods?.includes(selectedOrderItem.food.id) ||
+    d.type === 'Category' && d.categories?.includes(selectedOrderItem.food.categoryId)
+  ) : [];
 
   return (
     <SafeAreaView style={styles.container}>
@@ -412,6 +418,25 @@ const PosScreen = () => {
                     <Text style={styles.modalTitle}>Edit Item: {selectedOrderItem?.food.name}</Text>
                     <Text style={styles.inputLabel}>Quantity</Text>
                     <TextInput style={styles.pinInput} value={editQuantity} onChangeText={setEditQuantity} keyboardType="number-pad" autoFocus={true} />
+                    
+                    <Text style={styles.inputLabel}>Discount</Text>
+                    <View style={styles.pickerContainer}>
+                        <TouchableOpacity style={styles.picker} onPress={() => {
+                            Alert.alert('Select Discount', '',
+                                [
+                                    { text: 'No Discount', onPress: () => setEditDiscount('') },
+                                    ...applicableDiscounts.map(d => ({
+                                        text: `${d.name} (${d.percent}%)`,
+                                        onPress: () => setEditDiscount(d.percent.toString()),
+                                    }))
+                                ],
+                                { cancelable: true }
+                            );
+                        }}>
+                            <Text style={styles.pickerText}>{editDiscount ? `${editDiscount}%` : 'Select a discount...'}</Text>
+                        </TouchableOpacity>
+                    </View>
+
                     <Text style={styles.inputLabel}>Note</Text>
                     <TextInput style={styles.pinInput} value={editNote} onChangeText={setEditNote} />
                     <View style={styles.modalActions}>
@@ -527,6 +552,21 @@ const styles = StyleSheet.create({
     buttonText: { color: 'white', fontWeight: 'bold' },
     quantityControl: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', width: 100 },
     quantityText: { fontSize: 16, fontWeight: 'bold', marginHorizontal: 10 },
+    pickerContainer: {
+        width: '80%',
+        marginBottom: 20,
+    },
+    picker: {
+        borderWidth: 1,
+        borderColor: '#ccc',
+        borderRadius: 8,
+        padding: 15,
+        justifyContent: 'center',
+    },
+    pickerText: {
+        fontSize: 16,
+        textAlign: 'center',
+    },
 });
 
 export default PosScreen;
