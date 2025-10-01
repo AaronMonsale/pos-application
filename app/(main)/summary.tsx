@@ -40,7 +40,7 @@ const SummaryScreen = () => {
                 <FlatList
                     data={items}
                     renderItem={renderOrderItem}
-                    keyExtractor={(item) => item.id}
+                    keyExtractor={(item, index) => `${item.id}-${index}`}
                     style={styles.list}
                 />
 
