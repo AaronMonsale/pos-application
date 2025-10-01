@@ -19,7 +19,7 @@ interface OrderItemType {
   id: string; // Unique ID for each order item instance
   food: Food;
   quantity: number;
-  discount?: number; // Discount percentage for this specific item
+  discount?: number | null; // Discount percentage for this specific item
   note?: string;
 }
 interface Category { id: string; name: string; foods: Food[]; }
@@ -207,7 +207,7 @@ const PosScreen = () => {
                   item.id === selectedOrderItem.id
                       ? { ...item,
                           quantity: qty,
-                          discount: !isNaN(disc) && disc > 0 ? disc : undefined,
+                          discount: !isNaN(disc) && disc > 0 ? disc : null,
                           note: editNote,
                         }
                       : item
@@ -237,8 +237,8 @@ const PosScreen = () => {
         name: item.food.name,
         price: item.food.price,
         quantity: item.quantity,
-        discount: item.discount,
-        note: item.note,
+        discount: item.discount || 0,
+        note: item.note || '',
         total: item.food.price * item.quantity * (1 - (item.discount || 0) / 100),
       }));
 
@@ -251,8 +251,8 @@ const PosScreen = () => {
           total,
           createdAt: serverTimestamp(),
           currency: 'PHP',
-          staffId: currentStaff?.id,
-          staffName: currentStaff?.name
+          staffId: currentStaff?.id || null,
+          staffName: currentStaff?.name || null
       });
 
       router.push({
@@ -412,8 +412,6 @@ const PosScreen = () => {
                     <Text style={styles.modalTitle}>Edit Item: {selectedOrderItem?.food.name}</Text>
                     <Text style={styles.inputLabel}>Quantity</Text>
                     <TextInput style={styles.pinInput} value={editQuantity} onChangeText={setEditQuantity} keyboardType="number-pad" autoFocus={true} />
-                    <Text style={styles.inputLabel}>Discount (%)</Text>
-                    <TextInput style={styles.pinInput} value={editDiscount} onChangeText={setEditDiscount} keyboardType="decimal-pad" />
                     <Text style={styles.inputLabel}>Note</Text>
                     <TextInput style={styles.pinInput} value={editNote} onChangeText={setEditNote} />
                     <View style={styles.modalActions}>

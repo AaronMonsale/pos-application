@@ -15,6 +15,7 @@ interface Transaction {
   total: number;
   createdAt: { toDate: () => Date };
   currency: string;
+  staffName?: string;
 }
 
 const TransactionsScreen = () => {
@@ -94,6 +95,7 @@ const TransactionsScreen = () => {
                 <Text style={styles.transactionId}>ID: {item.id}</Text>
                 <Text style={styles.transactionDate}>{item.createdAt.toDate().toLocaleDateString()}</Text>
             </View>
+            {item.staffName && <Text style={styles.staffNameText}>Processed by: {item.staffName}</Text>}
             <View style={styles.itemsContainer}>
                 {item.items.map((food, index) => (
                     <Text key={index} style={styles.itemText}>{food.name} - {item.currency}{food.price.toFixed(2)}</Text>
@@ -156,6 +158,7 @@ const TransactionsScreen = () => {
                         <>
                             <Text style={styles.modalTitle}>Transaction Details</Text>
                             <Text style={styles.modalText}>ID: {selectedTransaction.id}</Text>
+                            {selectedTransaction.staffName && <Text style={styles.modalText}>Staff: {selectedTransaction.staffName}</Text>}
                             <Text style={styles.modalText}>Date: {selectedTransaction.createdAt.toDate().toLocaleString()}</Text>
                             <View style={styles.itemsContainer}>
                                 {selectedTransaction.items.map((item, index) => (
@@ -254,6 +257,12 @@ const styles = StyleSheet.create({
   transactionDate: {
     fontSize: 12,
     color: '#888',
+  },
+  staffNameText: {
+    fontSize: 14,
+    color: '#555',
+    fontStyle: 'italic',
+    marginBottom: 8,
   },
   itemsContainer: {
     marginVertical: 10,
