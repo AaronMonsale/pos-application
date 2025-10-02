@@ -11,8 +11,9 @@ export default function MainLayout() {
       <Stack.Screen name="system-settings" options={{ headerShown: true, headerTitle: 'System Settings' }} />
       <Stack.Screen name="pos" options={{ headerShown: false }} />
       <Stack.Screen name="pos-settings" options={{ headerShown: true, headerTitle: 'POS Settings' }} />
-       <Stack.Screen name="tables" options={{ headerShown: true, headerTitle: 'Tables' }} />
+       <Stack.Screen name="tables" options={{ headerShown: true, headerTitle: 'Tables', headerBackVisible: false }} />
       <Stack.Screen name="summary" options={{ headerShown: false }} />
+       <Stack.Screen name="staff" options={{ headerShown: true, headerTitle: 'Staff', headerBackVisible: false }} />
     </Stack>
   );
 }

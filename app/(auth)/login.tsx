@@ -1,4 +1,3 @@
-
 import { useRouter } from "expo-router";
 import { signInWithEmailAndPassword } from "firebase/auth";
 import { doc, getDoc } from "firebase/firestore";
@@ -30,7 +29,7 @@ const Login = () => {
         if (userData.role === "admin") {
           router.replace("/(main)/admin");
         } else {
-          router.replace("/(main)/pos");
+          router.replace("/(main)/tables");
         }
       } else {
         Alert.alert("Error", "User data not found!");
