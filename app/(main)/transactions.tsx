@@ -16,6 +16,7 @@ interface Transaction {
   createdAt: { toDate: () => Date };
   currency: string;
   staffName?: string;
+  tableName?: string;
 }
 
 const TransactionsScreen = () => {
@@ -96,6 +97,7 @@ const TransactionsScreen = () => {
                 <Text style={styles.transactionDate}>{item.createdAt.toDate().toLocaleDateString()}</Text>
             </View>
             {item.staffName && <Text style={styles.staffNameText}>Processed by: {item.staffName}</Text>}
+            {item.tableName && <Text style={styles.tableNameText}>From: {item.tableName}</Text>}
             <View style={styles.itemsContainer}>
                 {item.items.map((food, index) => (
                     <Text key={index} style={styles.itemText}>{food.name} - {item.currency}{food.price.toFixed(2)}</Text>
@@ -159,11 +161,13 @@ const TransactionsScreen = () => {
                             <Text style={styles.modalTitle}>Transaction Details</Text>
                             <Text style={styles.modalText}>ID: {selectedTransaction.id}</Text>
                             {selectedTransaction.staffName && <Text style={styles.modalText}>Staff: {selectedTransaction.staffName}</Text>}
+                            {selectedTransaction.tableName && <Text style={styles.modalText}>Table: {selectedTransaction.tableName}</Text>}
                             <Text style={styles.modalText}>Date: {selectedTransaction.createdAt.toDate().toLocaleString()}</Text>
                             <View style={styles.itemsContainer}>
                                 {selectedTransaction.items.map((item, index) => (
                                     <Text key={index} style={styles.itemText}>{item.name} - {selectedTransaction.currency}{item.price.toFixed(2)}</Text>
-                                ))}
+                                ))
+                                }
                             </View>
                             <Text style={styles.modalText}>Subtotal: {selectedTransaction.currency}{selectedTransaction.subtotal.toFixed(2)}</Text>
                             <Text style={styles.modalText}>Tax: {selectedTransaction.currency}{selectedTransaction.tax.toFixed(2)}</Text>
@@ -259,6 +263,12 @@ const styles = StyleSheet.create({
     color: '#888',
   },
   staffNameText: {
+    fontSize: 14,
+    color: '#555',
+    fontStyle: 'italic',
+    marginBottom: 4,
+  },
+  tableNameText: {
     fontSize: 14,
     color: '#555',
     fontStyle: 'italic',

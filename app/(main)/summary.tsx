@@ -1,30 +1,26 @@
-import { Ionicons } from '@expo/vector-icons';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import React from 'react';
-import { Alert, FlatList, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { FlatList, SafeAreaView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { Colors } from '../../constants/theme';
+
 
 const SummaryScreen = () => {
     const router = useRouter();
     const params = useLocalSearchParams();
-    const { orderItems, subtotal, tax, serviceCharge, discountAmount, total, staffName } = params;
+    const { orderItems, subtotal, tax, serviceCharge, discountAmount, total, staffName, tableName } = params;
 
     const items = JSON.parse(orderItems as string);
-    
-    const handlePrint = () => {
-        Alert.alert("Print Invoice", "This will print the invoice.");
-    }
 
     const handleDone = () => {
-        router.back();
-    }
+        // Navigate back to the tables screen, resetting the staff to null
+        router.replace({ pathname: '/(main)/tables' });
+    };
 
     const renderOrderItem = ({ item }: { item: any }) => (
         <View style={styles.itemRow}>
             <View>
                 <Text style={styles.itemName}>{item.name} x{item.quantity}</Text>
-                {item.discount && item.discount > 0 && (
+                {item.discount > 0 && (
                     <Text style={styles.itemDiscount}>
                         Discount: {item.discount}%
                     </Text>
@@ -39,63 +35,54 @@ const SummaryScreen = () => {
             <View style={styles.header}>
                 <Text style={styles.headerTitle}>Transaction Summary</Text>
             </View>
-
-            <View style={styles.content}>
-                <Text style={styles.sectionTitle}>Order Items</Text>
-                <FlatList
-                    data={items}
-                    renderItem={renderOrderItem}
-                    keyExtractor={(item, index) => `${item.id}-${index}`}
-                    style={styles.list}
-                />
-
-                <View style={styles.summaryContainer}>
-                    <View style={styles.summaryRow}>
-                        <Text style={styles.summaryText}>Subtotal</Text>
-                        <Text style={styles.summaryText}>₱{parseFloat(subtotal as string).toFixed(2)}</Text>
-                    </View>
-                    <View style={styles.summaryRow}>
-                        <Text style={styles.summaryText}>Tax</Text>
-                        <Text style={styles.summaryText}>₱{parseFloat(tax as string).toFixed(2)}</Text>
-                    </View>
-                    <View style={styles.summaryRow}>
-                        <Text style={styles.summaryText}>Service Charge</Text>
-                        <Text style={styles.summaryText}>₱{parseFloat(serviceCharge as string).toFixed(2)}</Text>
-                    </View>
-                    {discountAmount && parseFloat(discountAmount as string) > 0 && (
-                        <View style={styles.summaryRow}>
-                            <Text style={styles.discountText}>Discount</Text>
-                            <Text style={styles.discountText}>-₱{parseFloat(discountAmount as string).toFixed(2)}</Text>
-                        </View>
-                    )}
-                    <View style={styles.totalRow}>
-                        <Text style={styles.totalText}>TOTAL</Text>
-                        <Text style={styles.totalText}>₱{parseFloat(total as string).toFixed(2)}</Text>
-                    </View>
-                </View>
-
-                <View style={styles.staffInfo}>
-                    <Text style={styles.staffText}>Transaction handled by: {staffName || 'N/A'}</Text>
-                </View>
-
+            <View style={styles.detailsContainer}>
+                <Text style={styles.detailText}>Staff: {staffName as string}</Text>
+                <Text style={styles.detailText}>Table: {tableName as string}</Text>
             </View>
-            <View style={styles.footer}>
-                <TouchableOpacity style={[styles.button, styles.printButton]} onPress={handlePrint}>
-                    <Ionicons name="print-outline" size={24} color="white" />
-                    <Text style={styles.buttonText}>Print Invoice</Text>
-                </TouchableOpacity>
-                <TouchableOpacity style={[styles.button, styles.doneButton]} onPress={handleDone}>
-                    <Text style={styles.buttonText}>Done</Text>
-                </TouchableOpacity>
+
+            <FlatList
+                data={items}
+                renderItem={renderOrderItem}
+                keyExtractor={(item, index) => `${item.id}-${index}`}
+                style={styles.list}
+            />
+
+            <View style={styles.summaryContainer}>
+                <View style={styles.summaryRow}>
+                    <Text>Subtotal</Text>
+                    <Text>₱{parseFloat(subtotal as string).toFixed(2)}</Text>
+                </View>
+                <View style={styles.summaryRow}>
+                    <Text>Tax</Text>
+                    <Text>₱{parseFloat(tax as string).toFixed(2)}</Text>
+                </View>
+                <View style={styles.summaryRow}>
+                    <Text>Service Charge</Text>
+                    <Text>₱{parseFloat(serviceCharge as string).toFixed(2)}</Text>
+                </View>
+                {discountAmount && parseFloat(discountAmount as string) > 0 && (
+                     <View style={styles.summaryRow}>
+                        <Text style={styles.discountText}>Discount</Text>
+                        <Text style={styles.discountText}>-₱{parseFloat(discountAmount as string).toFixed(2)}</Text>
+                    </View>
+                )}
+                <View style={styles.totalRow}>
+                    <Text style={styles.totalText}>TOTAL</Text>
+                    <Text style={styles.totalText}>₱{parseFloat(total as string).toFixed(2)}</Text>
+                </View>
             </View>
+
+            <TouchableOpacity style={styles.doneButton} onPress={handleDone}>
+                <Text style={styles.doneButtonText}>Done</Text>
+            </TouchableOpacity>
         </SafeAreaView>
     );
-}
+};
 
 const styles = StyleSheet.create({
     container: {
         flex: 1,
-        backgroundColor: Colors.light.background,
+        backgroundColor: '#f8f9fa',
     },
     header: {
         backgroundColor: Colors.light.tint,
@@ -104,28 +91,30 @@ const styles = StyleSheet.create({
     },
     headerTitle: {
         color: 'white',
-        fontSize: 24,
+        fontSize: 22,
         fontWeight: 'bold',
     },
-    content: {
-        flex: 1,
+    detailsContainer: {
         padding: 20,
+        borderBottomWidth: 1,
+        borderBottomColor: '#eee',
     },
-    sectionTitle: {
-        fontSize: 20,
-        fontWeight: 'bold',
-        marginBottom: 10,
+    detailText: {
+        fontSize: 16,
+        marginBottom: 5,
     },
     list: {
-        marginBottom: 20,
+        flex: 1,
     },
     itemRow: {
         flexDirection: 'row',
         justifyContent: 'space-between',
-        paddingVertical: 10,
+        alignItems: 'center',
+        paddingHorizontal: 20,
+        paddingVertical: 15,
+        backgroundColor: 'white',
         borderBottomWidth: 1,
         borderBottomColor: '#eee',
-        alignItems: 'center',
     },
     itemName: {
         fontSize: 16,
@@ -134,77 +123,50 @@ const styles = StyleSheet.create({
     itemDiscount: {
         fontSize: 14,
         color: 'green',
+        marginTop: 2,
     },
     itemTotal: {
         fontSize: 16,
         fontWeight: 'bold',
     },
     summaryContainer: {
+        padding: 20,
+        backgroundColor: 'white',
         borderTopWidth: 1,
-        borderTopColor: '#ccc',
-        paddingTop: 10,
-        marginBottom: 20,
+        borderTopColor: '#eee',
     },
     summaryRow: {
         flexDirection: 'row',
         justifyContent: 'space-between',
-        marginBottom: 8,
-    },
-    summaryText: {
+        marginBottom: 10,
         fontSize: 16,
     },
     discountText: {
-        fontSize: 16,
         color: 'red',
-        fontWeight: 'bold',
+        fontSize: 16,
     },
     totalRow: {
         flexDirection: 'row',
         justifyContent: 'space-between',
         marginTop: 10,
-        borderTopWidth: 2,
-        borderTopColor: '#333',
         paddingTop: 10,
+        borderTopWidth: 1,
+        borderTopColor: '#eee',
     },
     totalText: {
-        fontSize: 20,
+        fontSize: 18,
         fontWeight: 'bold',
-    },
-    staffInfo: {
-        alignItems: 'center',
-        marginTop: 20,
-    },
-    staffText: {
-        fontSize: 16,
-        fontStyle: 'italic',
-    },
-    footer: {
-        flexDirection: 'row',
-        justifyContent: 'space-around',
-        padding: 20,
-        borderTopWidth: 1,
-        borderTopColor: '#ccc',
-    },
-    button: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        justifyContent: 'center',
-        paddingVertical: 15,
-        borderRadius: 8,
-        flex: 1,
-        marginHorizontal: 5,
-    },
-    printButton: {
-        backgroundColor: '#6c757d',
     },
     doneButton: {
         backgroundColor: Colors.light.tint,
+        padding: 20,
+        alignItems: 'center',
+        justifyContent: 'center',
     },
-    buttonText: {
+    doneButtonText: {
         color: 'white',
         fontSize: 18,
         fontWeight: 'bold',
-        marginLeft: 10,
     },
 });
 

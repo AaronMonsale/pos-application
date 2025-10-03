@@ -1,234 +1,316 @@
+
 import { Ionicons } from '@expo/vector-icons';
 import { addDoc, collection, deleteDoc, doc, getDocs, updateDoc } from 'firebase/firestore';
 import React, { useEffect, useState } from 'react';
-import { Alert, FlatList, Modal, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { Alert, FlatList, Modal, StyleSheet, Text, TextInput, TouchableOpacity, TouchableWithoutFeedback, View } from 'react-native';
 import { Colors } from '../../constants/theme';
 import { db } from '../../firebase';
 
 interface Staff {
-  id: string;
-  name: string;
-  pin: string;
+    id: string;
+    name: string;
+    pin: string;
 }
 
 const StaffManagementScreen = () => {
-  const [staffList, setStaffList] = useState<Staff[]>([]);
-  const [isModalVisible, setIsModalVisible] = useState(false);
-  const [editingStaff, setEditingStaff] = useState<Staff | null>(null);
-  const [name, setName] = useState('');
-  const [pin, setPin] = useState('');
+    const [modalVisible, setModalVisible] = useState(false);
+    const [staffList, setStaffList] = useState<Staff[]>([]);
+    const [staffName, setStaffName] = useState('');
+    const [staffPin, setStaffPin] = useState('');
+    const [editingStaff, setEditingStaff] = useState<Staff | null>(null);
 
-  const fetchStaff = async () => {
-    const staffCollection = collection(db, 'staff');
-    const staffSnapshot = await getDocs(staffCollection);
-    const staff = staffSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Staff));
-    setStaffList(staff);
-  };
+    useEffect(() => {
+        fetchStaff();
+    }, []);
 
-  useEffect(() => {
-    fetchStaff();
-  }, []);
+    const fetchStaff = async () => {
+        try {
+            const staffCollection = collection(db, 'staff');
+            const staffSnapshot = await getDocs(staffCollection);
+            const list = staffSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Staff)).sort((a, b) => a.name.localeCompare(b.name));
+            setStaffList(list);
+        } catch (error) {
+            console.error("Error fetching staff: ", error);
+            Alert.alert("Error", "Could not fetch staff list.");
+        }
+    };
 
-  const openModal = (staff: Staff | null = null) => {
-    setEditingStaff(staff);
-    setName(staff ? staff.name : '');
-    setPin(staff ? staff.pin : '');
-    setIsModalVisible(true);
-  };
+    const handleAddOrUpdateStaff = async () => {
+        if (staffName.trim() === '' || staffPin.trim() === '') {
+            Alert.alert('Error', 'Staff name and PIN cannot be empty.');
+            return;
+        }
+        if (!/^\d{4}$/.test(staffPin)) {
+            Alert.alert('Error', 'PIN must be exactly 4 digits.');
+            return;
+        }
 
-  const handleSave = async () => {
-    if (!name || !pin || pin.length !== 4 || !/^\d+$/.test(pin)) {
-      Alert.alert('Invalid Input', 'Please enter a valid name and a 4-digit PIN.');
-      return;
-    }
-
-    try {
-      if (editingStaff) {
-        const staffDoc = doc(db, 'staff', editingStaff.id);
-        await updateDoc(staffDoc, { name, pin });
-      } else {
-        await addDoc(collection(db, 'staff'), { name, pin });
-      }
-      fetchStaff();
-      setIsModalVisible(false);
-    } catch (error) {
-      console.error("Error saving staff: ", error);
-      Alert.alert('Error', 'There was a problem saving the staff member.');
-    }
-  };
-
-  const handleDelete = async (staffId: string) => {
-    Alert.alert(
-      'Delete Staff',
-      'Are you sure you want to delete this staff member?',
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Delete',
-          style: 'destructive',
-          onPress: async () => {
-            try {
-              await deleteDoc(doc(db, 'staff', staffId));
-              fetchStaff();
-            } catch (error) {
-              console.error("Error deleting staff: ", error);
-              Alert.alert('Error', 'There was a problem deleting the staff member.');
+        try {
+            if (editingStaff) {
+                const staffDoc = doc(db, 'staff', editingStaff.id);
+                await updateDoc(staffDoc, { name: staffName, pin: staffPin });
+            } else {
+                await addDoc(collection(db, 'staff'), { name: staffName, pin: staffPin });
             }
-          },
-        },
-      ]
-    );
-  };
+            closeModal();
+            fetchStaff();
+        } catch (error) {
+            console.error("Error adding/updating staff: ", error);
+            Alert.alert("Error", "Could not save staff details.");
+        }
+    };
 
-  const renderItem = ({ item }: { item: Staff }) => (
-    <View style={styles.itemContainer}>
-      <Text style={styles.itemName}>{item.name}</Text>
-      <View style={styles.itemActions}>
-        <TouchableOpacity onPress={() => openModal(item)}>
-          <Ionicons name="pencil" size={24} color={Colors.light.tint} />
-        </TouchableOpacity>
-        <TouchableOpacity onPress={() => handleDelete(item.id)} style={{ marginLeft: 15 }}>
-          <Ionicons name="trash" size={24} color="red" />
-        </TouchableOpacity>
-      </View>
-    </View>
-  );
+    const handleEdit = (staff: Staff) => {
+        setEditingStaff(staff);
+        setStaffName(staff.name);
+        setStaffPin(staff.pin);
+        setModalVisible(true);
+    };
 
-  return (
-    <View style={styles.container}>
-      <FlatList
-        data={staffList}
-        renderItem={renderItem}
-        keyExtractor={item => item.id}
-        style={styles.list}
-      />
-      <TouchableOpacity style={styles.fab} onPress={() => openModal()}>
-        <Ionicons name="add" size={30} color="white" />
-      </TouchableOpacity>
+    const handleDelete = (staff: Staff) => {
+        Alert.alert(
+            'Delete Staff',
+            `Are you sure you want to delete ${staff.name}? This action cannot be undone.`,
+            [
+                { text: 'Cancel', style: 'cancel' },
+                {
+                    text: 'Delete',
+                    style: 'destructive',
+                    onPress: async () => {
+                        try {
+                            await deleteDoc(doc(db, 'staff', staff.id));
+                            fetchStaff();
+                        } catch (error) {
+                            console.error("Error deleting staff: ", error);
+                            Alert.alert("Error", "Could not delete staff member.");
+                        }
+                    },
+                },
+            ]
+        );
+    };
+    
+    const openModal = () => {
+        setEditingStaff(null);
+        setStaffName('');
+        setStaffPin('');
+        setModalVisible(true);
+    }
 
-      <Modal
-        visible={isModalVisible}
-        transparent={true}
-        animationType="fade"
-        onRequestClose={() => setIsModalVisible(false)}
-      >
-        <View style={styles.modalOverlay}>
-          <View style={styles.modalContent}>
-            <Text style={styles.modalTitle}>{editingStaff ? 'Edit Staff' : 'Add Staff'}</Text>
-            <TextInput
-              style={styles.input}
-              placeholder="Name"
-              value={name}
-              onChangeText={setName}
-            />
-            <TextInput
-              style={styles.input}
-              placeholder="4-Digit PIN"
-              value={pin}
-              onChangeText={setPin}
-              keyboardType="number-pad"
-              maxLength={4}
-              secureTextEntry
-            />
-            <View style={styles.modalActions}>
-              <TouchableOpacity style={[styles.button, styles.buttonCancel]} onPress={() => setIsModalVisible(false)}>
-                <Text style={styles.buttonText}>Cancel</Text>
-              </TouchableOpacity>
-              <TouchableOpacity style={[styles.button, styles.buttonSave]} onPress={handleSave}>
-                <Text style={styles.buttonText}>Save</Text>
-              </TouchableOpacity>
+    const closeModal = () => {
+        setModalVisible(false);
+        setEditingStaff(null);
+        setStaffName('');
+        setStaffPin('');
+    }
+
+    const renderStaffItem = ({ item }: { item: Staff }) => (
+        <View style={styles.itemContainer}>
+            <Text style={styles.itemName}>{item.name}</Text>
+            <View style={styles.itemActions}>
+                <TouchableOpacity onPress={() => handleEdit(item)} style={styles.actionButton}>
+                    <Ionicons name="pencil" size={24} color={Colors.light.tint} />
+                </TouchableOpacity>
+                <TouchableOpacity onPress={() => handleDelete(item)} style={styles.actionButton}>
+                    <Ionicons name="trash-bin" size={24} color={'#dc3545'} />
+                </TouchableOpacity>
             </View>
-          </View>
         </View>
-      </Modal>
-    </View>
-  );
+    );
+
+    return (
+        <View style={styles.container}>
+            <TouchableOpacity style={styles.addButton} onPress={openModal}>
+                <Text style={styles.addButtonText}>Add New Staff</Text>
+            </TouchableOpacity>
+
+            <FlatList
+                data={staffList}
+                renderItem={renderStaffItem}
+                keyExtractor={item => item.id}
+                contentContainerStyle={styles.listContainer}
+                ListEmptyComponent={<Text style={styles.emptyText}>No staff members found. Add one to get started.</Text>}
+            />
+
+            <Modal
+                animationType="fade"
+                transparent={true}
+                visible={modalVisible}
+                onRequestClose={closeModal}
+            >
+                <TouchableWithoutFeedback onPress={closeModal}>
+                    <View style={styles.centeredView}>
+                        <TouchableWithoutFeedback>
+                            <View style={styles.modalView}>
+                                <Text style={styles.modalText}>{editingStaff ? 'Edit Staff' : 'Add New Staff'}</Text>
+                                <TextInput
+                                    style={styles.input}
+                                    placeholder="Staff Name"
+                                    value={staffName}
+                                    onChangeText={setStaffName}
+                                    autoCapitalize="words"
+                                />
+                                <TextInput
+                                    style={styles.input}
+                                    placeholder="4-Digit PIN"
+                                    value={staffPin}
+                                    onChangeText={setStaffPin}
+                                    keyboardType="number-pad"
+                                    maxLength={4}
+                                    secureTextEntry
+                                />
+                                <View style={styles.modalActions}>
+                                    <TouchableOpacity
+                                        style={[styles.button, styles.buttonCancel]}
+                                        onPress={closeModal}
+                                    >
+                                        <Text style={styles.buttonText}>Cancel</Text>
+                                    </TouchableOpacity>
+                                    <TouchableOpacity
+                                        style={[styles.button, styles.buttonSave]}
+                                        onPress={handleAddOrUpdateStaff}
+                                    >
+                                        <Text style={styles.buttonText}>{editingStaff ? 'Update' : 'Add'}</Text>
+                                    </TouchableOpacity>
+                                </View>
+                            </View>
+                        </TouchableWithoutFeedback>
+                    </View>
+                </TouchableWithoutFeedback>
+            </Modal>
+        </View>
+    );
 };
 
 const styles = StyleSheet.create({
     container: {
         flex: 1,
-        backgroundColor: '#f0f0f0',
+        backgroundColor: '#f8f9fa',
     },
-    list: {
-        flex: 1,
+    addButton: {
+        backgroundColor: Colors.light.tint,
+        padding: 15,
+        marginHorizontal: 20,
+        marginTop: 20,
+        marginBottom: 10,
+        borderRadius: 10,
+        alignItems: 'center',
+        shadowColor: "#000",
+        shadowOffset: {
+            width: 0,
+            height: 2,
+        },
+        shadowOpacity: 0.25,
+        shadowRadius: 3.84,
+        elevation: 5,
+    },
+    addButtonText: {
+        color: 'white',
+        fontSize: 18,
+        fontWeight: 'bold',
+    },
+    listContainer: {
+        paddingHorizontal: 20,
     },
     itemContainer: {
         backgroundColor: 'white',
         padding: 20,
-        marginVertical: 8,
-        marginHorizontal: 16,
-        borderRadius: 8,
+        borderRadius: 10,
         flexDirection: 'row',
         justifyContent: 'space-between',
         alignItems: 'center',
-        elevation: 2,
+        marginBottom: 10,
+        shadowColor: "#000",
+        shadowOffset: {
+            width: 0,
+            height: 1,
+        },
+        shadowOpacity: 0.22,
+        shadowRadius: 2.22,
+        elevation: 3,
     },
     itemName: {
         fontSize: 18,
+        fontWeight: '500',
     },
     itemActions: {
         flexDirection: 'row',
     },
-    fab: {
-        position: 'absolute',
-        right: 30,
-        bottom: 30,
-        backgroundColor: Colors.light.tint,
-        width: 60,
-        height: 60,
-        borderRadius: 30,
-        justifyContent: 'center',
-        alignItems: 'center',
-        elevation: 8,
+    actionButton: {
+        marginLeft: 20,
     },
-    modalOverlay: {
+    emptyText: {
+        textAlign: 'center',
+        marginTop: 50,
+        fontSize: 16,
+        color: '#6c757d',
+    },
+    centeredView: {
         flex: 1,
-        backgroundColor: 'rgba(0,0,0,0.5)',
         justifyContent: 'center',
         alignItems: 'center',
+        backgroundColor: 'rgba(0,0,0,0.4)',
     },
-    modalContent: {
+    modalView: {
+        margin: 20,
         backgroundColor: 'white',
-        padding: 20,
-        borderRadius: 10,
+        borderRadius: 20,
+        padding: 35,
+        alignItems: 'center',
+        shadowColor: '#000',
+        shadowOffset: {
+            width: 0,
+            height: 2,
+        },
+        shadowOpacity: 0.25,
+        shadowRadius: 4,
+        elevation: 5,
         width: '90%',
+        maxWidth: 400,
     },
-    modalTitle: {
+    modalText: {
+        marginBottom: 25,
+        textAlign: 'center',
         fontSize: 22,
         fontWeight: 'bold',
-        marginBottom: 20,
     },
     input: {
-        borderWidth: 1,
+        height: 50,
         borderColor: '#ccc',
+        borderWidth: 1,
+        marginBottom: 20,
+        width: '100%',
         padding: 15,
-        borderRadius: 8,
-        marginBottom: 15,
+        borderRadius: 10,
         fontSize: 16,
     },
+
     modalActions: {
         flexDirection: 'row',
-        justifyContent: 'flex-end',
-        marginTop: 10,
+        justifyContent: 'space-between',
+        width: '100%',
     },
     button: {
-        paddingVertical: 10,
-        paddingHorizontal: 20,
-        borderRadius: 8,
-        marginLeft: 10,
-    },
-    buttonCancel: {
-        backgroundColor: '#ccc',
+        borderRadius: 10,
+        padding: 15,
+        elevation: 2,
+        flex: 1,
+        alignItems: 'center',
     },
     buttonSave: {
         backgroundColor: Colors.light.tint,
+        marginLeft: 10,
+    },
+    buttonCancel: {
+        backgroundColor: '#6c757d',
+        marginRight: 10,
     },
     buttonText: {
         color: 'white',
         fontWeight: 'bold',
+        textAlign: 'center',
         fontSize: 16,
-    }
+    },
 });
 
 export default StaffManagementScreen;

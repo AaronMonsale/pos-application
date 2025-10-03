@@ -1,29 +1,65 @@
+
 import { Ionicons } from '@expo/vector-icons';
-import { useNavigation, useRouter } from 'expo-router';
+import { useLocalSearchParams, useNavigation, useRouter } from 'expo-router';
 import { addDoc, collection, deleteDoc, doc, getDocs, updateDoc } from 'firebase/firestore';
 import React, { useEffect, useLayoutEffect, useState } from 'react';
 import { Alert, FlatList, Modal, StyleSheet, Text, TextInput, TouchableOpacity, TouchableWithoutFeedback, View } from 'react-native';
 import { Colors } from '../../constants/theme';
-import { db } from '../../firebase';
+import { auth, db } from '../../firebase';
 
 interface Table {
     id: string;
     name: string;
+    occupied?: boolean;
+    occupiedBy?: string;
 }
 
 const TablesScreen = () => {
     const router = useRouter();
     const navigation = useNavigation();
+    const params = useLocalSearchParams();
+    const { staff: staffJson } = params as { staff?: string };
+
     const [modalVisible, setModalVisible] = useState(false);
     const [tables, setTables] = useState<Table[]>([]);
     const [tableName, setTableName] = useState('');
     const [editingTable, setEditingTable] = useState<Table | null>(null);
 
     useLayoutEffect(() => {
+        const handleLogout = () => {
+            Alert.alert("Logout", "Are you sure you want to log out?", [
+                { text: "Cancel", style: "cancel" },
+                {
+                    text: "Logout",
+                    style: "destructive",
+                    onPress: () => {
+                        auth.signOut();
+                        router.replace('/(auth)/login');
+                    },
+                },
+            ]);
+        };
+
         navigation.setOptions({
+            headerTitle: 'Tables',
             headerLeft: () => null,
+            headerRight: () => (
+                <TouchableOpacity
+                    style={{ marginRight: 15 }}
+                    onPress={handleLogout}
+                >
+                    <Ionicons name="log-out-outline" size={28} color="white" />
+                </TouchableOpacity>
+            ),
+            headerStyle: {
+                backgroundColor: Colors.light.tint,
+            },
+            headerTintColor: 'white',
+            headerTitleStyle: {
+                fontWeight: 'bold',
+            },
         });
-    }, [navigation]);
+    }, [navigation, router]);
 
     useEffect(() => {
         fetchTables();
@@ -49,7 +85,7 @@ const TablesScreen = () => {
             setEditingTable(null);
         } else {
             // Add new table
-            await addDoc(collection(db, 'tables'), { name: tableName });
+            await addDoc(collection(db, 'tables'), { name: tableName, occupied: false, occupiedBy: null });
         }
 
         setTableName('');
@@ -84,7 +120,11 @@ const TablesScreen = () => {
     const handleTablePress = (table: Table) => {
         router.push({
             pathname: '/(main)/pos',
-            params: { tableId: table.id, tableName: table.name },
+            params: { 
+                tableId: table.id, 
+                tableName: table.name,
+                staff: staffJson,
+             },
         });
     };
 
@@ -114,17 +154,31 @@ const TablesScreen = () => {
     }
 
     const renderTableItem = ({ item }: { item: Table }) => (
-        <TouchableOpacity style={styles.tile} onPress={() => handleTablePress(item)} onLongPress={() => handleLongPress(item)}>
-            <Ionicons name="grid-outline" size={32} color={Colors.light.tint} />
-            <Text style={styles.tileText}>{item.name}</Text>
+        <TouchableOpacity 
+            style={[styles.tile, item.occupied && styles.occupiedTile]} 
+            onPress={() => handleTablePress(item)} 
+            onLongPress={() => handleLongPress(item)}
+        >
+            <Ionicons name="grid-outline" size={32} color={item.occupied ? 'white' : Colors.light.tint} />
+            <Text style={[styles.tileText, item.occupied && styles.occupiedTileText]}>{item.name}</Text>
+            {item.occupied && item.occupiedBy && (
+                <Text style={styles.occupiedByText} numberOfLines={1}>
+                    by {item.occupiedBy}
+                </Text>
+            )}
         </TouchableOpacity>
     );
 
     return (
         <View style={styles.container}>
-            <TouchableOpacity style={styles.manageButton} onPress={openAddModal}>
-                <Text style={styles.manageButtonText}>Add Table</Text>
-            </TouchableOpacity>
+            <View style={styles.buttonContainer}>
+                 <TouchableOpacity style={styles.manageButton} onPress={openAddModal}>
+                    <Text style={styles.manageButtonText}>Add Table</Text>
+                </TouchableOpacity>
+                <TouchableOpacity style={styles.manageButton} onPress={() => router.push('/(main)/staff')}>
+                    <Text style={styles.manageButtonText}>Manage Staff</Text>
+                </TouchableOpacity>
+            </View>
 
             <FlatList
                 data={tables}
@@ -132,6 +186,8 @@ const TablesScreen = () => {
                 keyExtractor={item => item.id}
                 numColumns={3} // Adjust number of columns for your desired layout
                 contentContainerStyle={styles.tilesContainer}
+                onRefresh={fetchTables}
+                refreshing={false}
             />
 
             <Modal
@@ -180,12 +236,16 @@ const styles = StyleSheet.create({
         flex: 1,
         backgroundColor: '#f8f9fa',
     },
+    buttonContainer: {
+        flexDirection: 'row',
+        justifyContent: 'space-around',
+        marginTop: 20,
+        marginBottom: 10,
+        paddingHorizontal: 10,
+    },
     manageButton: {
         backgroundColor: Colors.light.tint,
         padding: 15,
-        marginHorizontal: 20,
-        marginTop: 20,
-        marginBottom: 10,
         borderRadius: 10,
         alignItems: 'center',
         shadowColor: "#000",
@@ -196,10 +256,12 @@ const styles = StyleSheet.create({
         shadowOpacity: 0.25,
         shadowRadius: 3.84,
         elevation: 5,
+        flex: 1,
+        marginHorizontal: 10,
     },
     manageButtonText: {
         color: 'white',
-        fontSize: 18,
+        fontSize: 16,
         fontWeight: 'bold',
     },
     tilesContainer: {
@@ -222,13 +284,28 @@ const styles = StyleSheet.create({
         shadowRadius: 3.84,
         elevation: 5,
         borderWidth: 1,
-        borderColor: '#eee'
+        borderColor: '#eee',
+        padding: 5,
+    },
+    occupiedTile: {
+        backgroundColor: '#00156E',
+        borderColor: '#e0a800',
     },
     tileText: {
         marginTop: 8,
         color: Colors.light.tint,
         fontSize: 14,
         fontWeight: '600',
+        textAlign: 'center',
+    },
+    occupiedTileText: {
+        color: 'white',
+    },
+    occupiedByText: {
+        fontSize: 11,
+        color: 'white',
+        marginTop: 2,
+        fontWeight: 'bold',
         textAlign: 'center',
     },
     centeredView: {

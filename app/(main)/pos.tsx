@@ -5,7 +5,7 @@ import React, { useCallback, useEffect, useState } from 'react';
 import { Alert, FlatList, Modal, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, TouchableWithoutFeedback, useWindowDimensions, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Colors } from '../../constants/theme';
-import { db } from '../../firebase';
+import { auth, db } from '../../firebase';
 
 // --- Interfaces ---
 interface Food {
@@ -91,9 +91,11 @@ const PosScreen = () => {
   const [enteredPin, setEnteredPin] = useState('');
   const isSystemLocked = !currentStaff;
 
-    useFocusEffect(
-        useCallback(() => {
-            const fetchData = async () => {
+  useFocusEffect(
+    useCallback(() => {
+        const fetchData = async () => {
+            try {
+                // Fetch static data like categories and discounts
                 const categoriesCollection = collection(db, 'categories');
                 const categoriesSnapshot = await getDocs(categoriesCollection);
                 const categoriesList = categoriesSnapshot.docs.map(doc => ({ id: doc.id, name: doc.data().name, foods: [] })) as Category[];
@@ -104,31 +106,51 @@ const PosScreen = () => {
                 const discountsList = discountsSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })) as Discount[];
                 setDiscounts(discountsList.filter(d => new Date() >= d.startDate.toDate() && new Date() <= d.expirationDate.toDate()));
 
-                if (!currentStaff) {
-                    const staffCollection = collection(db, 'staff');
-                    const staffSnapshot = await getDocs(staffCollection);
-                    const staff = staffSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Staff));
-                    setStaffList(staff);
-                }
+                // Fetch all staff members to identify the responsible one
+                const staffCollection = collection(db, 'staff');
+                const staffSnapshot = await getDocs(staffCollection);
+                const allStaff = staffSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Staff));
+                setStaffList(allStaff);
 
+                // Determine table and staff status
                 if (tableId) {
                     const tableDocRef = doc(db, 'tables', tableId);
                     const tableDocSnap = await getDoc(tableDocRef);
+
                     if (tableDocSnap.exists()) {
                         const tableData = tableDocSnap.data();
                         setIsTableOccupied(tableData.occupied || false);
                         setOccupiedBy(tableData.occupiedBy || null);
-                        if (tableData.order && tableData.order.length > 0) {
-                            setOrderItems(tableData.order);
+                        setOrderItems(tableData.order || []);
+
+                        // If the table is occupied and has a staff ID, find and set that staff member.
+                        if (tableData.occupied && tableData.staffId) {
+                            const responsibleStaff = allStaff.find(s => s.id === tableData.staffId);
+                            if (responsibleStaff) {
+                                setCurrentStaff(responsibleStaff);
+                            } else {
+                                // Staff may have been deleted, fall back to passed-in staff if any
+                                setCurrentStaff(staffJson ? JSON.parse(staffJson) : null);
+                            }
                         } else {
-                            setOrderItems([]);
+                            // If table is not occupied, or has no assigned staff, use the logged-in user from the previous screen
+                            setCurrentStaff(staffJson ? JSON.parse(staffJson) : null);
                         }
                     }
+                } else {
+                     // If no table is associated, just use the logged-in user
+                     setCurrentStaff(staffJson ? JSON.parse(staffJson) : null);
                 }
-            };
-            fetchData();
-        }, [tableId, currentStaff])
-    );
+            } catch (error) {
+                console.error("Failed to fetch data:", error);
+                Alert.alert("Error", "Failed to load page data.");
+            }
+        };
+
+        fetchData();
+    }, [tableId, staffJson]) // Dependencies updated for correctness
+);
+
 
     useEffect(() => {
         const newSubtotal = orderItems.reduce((acc, item) => acc + (item.food.price * item.quantity), 0);
@@ -345,17 +367,18 @@ const PosScreen = () => {
               { text: "Cancel", style: "cancel" },
               { text: "Save Order", onPress: () => handleSaveOrder() },
               { text: "Logout Anyway", style: "destructive", onPress: () => {
-                  setCurrentStaff(null);
-                  router.replace({ pathname: '/(main)/tables' });
+                  auth.signOut();
+                  router.replace('/(auth)/login');
               }}
           ]
       );
     } else {
-        setCurrentStaff(null);
-        router.replace({ pathname: '/(main)/tables' });
+        auth.signOut();
+        router.replace('/(auth)/login');
     }
     setIsDropdownVisible(false);
   };
+
 
   const renderFoodItem = ({ item }: { item: Food }) => (
     <TouchableOpacity onPress={() => { addToOrder(item); setIsModalVisible(false); }}>
@@ -446,14 +469,30 @@ const PosScreen = () => {
                     <Text style={styles.modalTitle}>Edit Item: {selectedOrderItem?.food.name}</Text>
                     <Text style={styles.inputLabel}>Quantity</Text>
                     <TextInput style={styles.pinInput} value={editQuantity} onChangeText={setEditQuantity} keyboardType="number-pad" autoFocus={true} />
-                    <Text style={styles.inputLabel}>Discount</Text>
+                    <Text style={styles.inputLabel}>Discount (%)</Text>
+                    <TextInput
+                        style={styles.pinInput}
+                        value={editDiscount}
+                        onChangeText={setEditDiscount}
+                        keyboardType="decimal-pad"
+                        placeholder="Enter discount percentage"
+                    />
+
+                    <Text style={styles.inputLabel}>Or Select Preset</Text>
                     <View style={styles.pickerContainer}>
                         <TouchableOpacity style={styles.picker} onPress={() => {
-                            Alert.alert('Select Discount', '',
-                                [ { text: 'No Discount', onPress: () => setEditDiscount('') },
-                                 ...applicableDiscounts.map(d => ({ text: `${d.name} (${d.percent}%)`, onPress: () => setEditDiscount(d.percent.toString()),})),
-                                ], { cancelable: true }); }}>
-                            <Text style={styles.pickerText}>{editDiscount ? `${editDiscount}%` : 'Select a discount...'}</Text>
+                            Alert.alert('Select Discount', 'Choose a preset option',
+                                [
+                                    { text: 'No Discount', onPress: () => setEditDiscount('') },
+                                    ...applicableDiscounts.map(d => ({
+                                        text: `${d.name} (${d.percent}%)`,
+                                        onPress: () => setEditDiscount(d.percent.toString()),
+                                    })),
+                                ],
+                                { cancelable: true }
+                            );
+                        }}>
+                            <Text style={styles.pickerText}>Select a preset discount...</Text>
                         </TouchableOpacity>
                     </View>
                     <Text style={styles.inputLabel}>Note</Text>
@@ -473,33 +512,37 @@ const PosScreen = () => {
         </Modal>
 
         <View style={styles.header}>
-            <TouchableOpacity style={styles.headerBackButton} onPress={() => router.replace({ pathname: '/(main)/tables', params: { staff: JSON.stringify(currentStaff) } })}>
-                <Ionicons name="arrow-back-outline" size={24} color="white" />
-                <Text style={styles.headerBackButtonText}>Tables</Text>
-            </TouchableOpacity>
-            <View style={styles.headerTableInfo}>
-                 <Text style={styles.tableName}>{tableName}</Text>
-                 <Text style={styles.tableStatus}>{isTableOccupied ? `(Occupied by ${occupiedBy})` : '(Available)'}</Text>
-            </View>
-            <View>
-                <TouchableOpacity style={styles.helloButton} onPress={() => setIsDropdownVisible(!isDropdownVisible)}>
-                    <Text style={styles.helloText}>{currentStaff ? currentStaff.name : 'Select Staff'}</Text>
-                    <Ionicons name="caret-down" size={20} color="white" />
-                </TouchableOpacity>
-                {isDropdownVisible && (
-                    <View style={styles.dropdown}>
-                        {currentStaff ? (
-                            <TouchableOpacity style={styles.dropdownItem} onPress={handleLogout}><Text style={styles.dropdownText}>Logout</Text></TouchableOpacity>
-                        ) : (
-                            <FlatList data={staffList} keyExtractor={(item) => item.id} renderItem={({item}) => (
-                                <TouchableOpacity style={styles.dropdownItem} onPress={() => handleStaffSelect(item)}><Text style={styles.dropdownText}>{item.name}</Text></TouchableOpacity>
-                            )} ListEmptyComponent={<View style={styles.dropdownItem}><Text style={styles.dropdownText}>No staff found</Text></View>}/>
-                        )}
-                    </View>
+    <TouchableOpacity style={styles.headerBackButton} onPress={() => router.replace({ pathname: '/(main)/tables', params: { staff: JSON.stringify(currentStaff) } })}>
+        <Ionicons name="arrow-back-outline" size={24} color="white" />
+        <Text style={styles.headerBackButtonText}></Text>
+    </TouchableOpacity>
+
+    {/* This part is restored */}
+    <View style={styles.headerTableInfo}>
+        <Text style={styles.tableName}>{tableName}</Text>
+        <Text style={styles.tableStatus}>{isTableOccupied ? `(Occupied by ${occupiedBy})` : '(Available)'}</Text>
+    </View>
+
+    <View>
+        <TouchableOpacity style={styles.helloButton} onPress={() => setIsDropdownVisible(!isDropdownVisible)}>
+            <Text style={styles.helloText}>{currentStaff ? currentStaff.name : 'Select Staff'}</Text>
+            <Ionicons name="caret-down" size={20} color="white" />
+        </TouchableOpacity>
+        {isDropdownVisible && (
+            <View style={styles.dropdown}>
+                {currentStaff ? (
+                    <TouchableOpacity style={styles.dropdownItem} onPress={handleLogout}><Text style={styles.dropdownText}>Logout</Text></TouchableOpacity>
+                ) : (
+                    <FlatList data={staffList} keyExtractor={(item) => item.id} renderItem={({item}) => (
+                        <TouchableOpacity style={styles.dropdownItem} onPress={() => handleStaffSelect(item)}><Text style={styles.dropdownText}>{item.name}</Text></TouchableOpacity>
+                    )} ListEmptyComponent={<View style={styles.dropdownItem}><Text style={styles.dropdownText}>No staff found</Text></View>}/>
                 )}
             </View>
-            <TouchableOpacity onPress={() => router.push('/(main)/pos-settings')}><Ionicons name="settings-outline" size={24} color="white" /></TouchableOpacity>
-        </View>
+        )}
+    </View>
+    {/* The settings icon that was on the end has been removed */}
+</View>
+
         {isDropdownVisible && <TouchableWithoutFeedback onPress={() => setIsDropdownVisible(false)}><View style={styles.overlay} /></TouchableWithoutFeedback>}
 
       {isLandscape ? (
