@@ -4,13 +4,17 @@ import React from "react";
 import { Image, ScrollView, StyleSheet, Text, TouchableOpacity, View, useWindowDimensions } from "react-native";
 import { Colors } from "../../constants/theme";
 
+// Updated the modules to include the new functions
 const modules = [
-  { name: "User & Role", icon: "people-outline" as const, route: "/(main)/user-role" },
+  // Replaced "User & Role" with "Manage Staff"
+  { name: "Manage Staff", icon: "people-outline" as const, route: "/(main)/staff" },
+  // Added "Manage Tables"
+  { name: "Manage Tables", icon: "grid-outline" as const, route: { pathname: '/(main)/tables', params: { admin: 'true' } } },
   { name: "Menu", icon: "restaurant-outline" as const, route: "/(main)/menu" },
   { name: "Transactions", icon: "cash-outline" as const, route: "/(main)/transactions" },
   { name: "Reports & Analytics", icon: "stats-chart-outline" as const, route: "/(main)/reports-analytics" },
-  { name: "System Settings", icon: "settings-outline" as const, route: "/(main)/system-settings" },
   { name: "Discount", icon: "pricetag-outline" as const, route: "/(main)/discount" },
+  { name: "System Settings", icon: "settings-outline" as const, route: "/(main)/system-settings" },
 ];
 
 const AdminDashboard = () => {
@@ -27,7 +31,7 @@ const AdminDashboard = () => {
       <View style={styles.tilesContainer}>
         {modules.map((module) => (
           <TouchableOpacity key={module.name} style={styles.tile} onPress={() => router.push(module.route as any)}>
-            <Ionicons name={module.icon} size={64} color={Colors.light.tint} />
+            <Ionicons name={module.icon} size={48} color={Colors.light.tint} />
             <Text style={styles.tileText}>{module.name}</Text>
           </TouchableOpacity>
         ))}
@@ -51,6 +55,7 @@ const styles = StyleSheet.create({
   logo: {
     width: 250,
     height: 120,
+    marginTop: 20,
     resizeMode: 'contain', 
   },
   headerText: {
@@ -67,9 +72,9 @@ const styles = StyleSheet.create({
     width: '100%',
   },
   tile: {
-    width: '45%', // 2 columns
-    aspectRatio: 1, // make it a square
-    backgroundColor: '#f0f0f0',
+    width: '45%', // Keep 2 columns as per the image
+    aspectRatio: 1,
+    backgroundColor: 'white', // Changed to white
     borderRadius: 15,
     padding: 10,
     marginVertical: 10,
@@ -80,9 +85,9 @@ const styles = StyleSheet.create({
       width: 0,
       height: 2,
     },
-    shadowOpacity: 0.25,
+    shadowOpacity: 0.1, // Softer shadow
     shadowRadius: 3.84,
-    elevation: 5,
+    elevation: 3, // Lower elevation for a flatter look
   },
   tileText: {
     marginTop: 10,
