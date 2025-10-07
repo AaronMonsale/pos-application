@@ -1,7 +1,7 @@
 import { Ionicons } from '@expo/vector-icons';
-import { useLocalSearchParams, useNavigation, useRouter } from 'expo-router';
+import { useFocusEffect, useLocalSearchParams, useNavigation, useRouter } from 'expo-router';
 import { addDoc, collection, deleteDoc, doc, getDoc, getDocs, updateDoc, writeBatch } from 'firebase/firestore';
-import React, { useEffect, useLayoutEffect, useState } from 'react';
+import React, { useCallback, useLayoutEffect, useState } from 'react';
 import { ActivityIndicator, Alert, FlatList, Modal, StyleSheet, Text, TextInput, TouchableOpacity, TouchableWithoutFeedback, View } from 'react-native';
 import { Colors } from '../../constants/theme';
 import { auth, db } from '../../firebase';
@@ -18,6 +18,15 @@ interface OrderItem {
     name: string;
     price: number;
     quantity: number;
+    discount?: number;
+}
+
+interface FetchedOrderItem {
+    id: string;
+    name: string;
+    price: number;
+    quantity: number;
+    discount: number;
 }
 
 const TablesScreen = () => {
@@ -39,7 +48,26 @@ const TablesScreen = () => {
     const [selectedTableForView, setSelectedTableForView] = useState<Table | null>(null);
     const [currentOrderItems, setCurrentOrderItems] = useState<OrderItem[]>([]);
     const [loadingOrder, setLoadingOrder] = useState(false);
+    const [orderSubtotal, setOrderSubtotal] = useState(0);
+    const [orderTax, setOrderTax] = useState(0);
+    const [orderServiceCharge, setOrderServiceCharge] = useState(0);
+    const [orderDiscount, setOrderDiscount] = useState(0);
+    const [orderTotal, setOrderTotal] = useState(0);
 
+
+    const fetchTables = useCallback(async () => {
+        const tablesCollection = collection(db, 'tables');
+        const tablesSnapshot = await getDocs(tablesCollection);
+        const tablesList = tablesSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Table)).sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }));
+        setTables(tablesList);
+    },[]);
+
+    const handleLogout = useCallback(() => {
+        Alert.alert("Logout", "Are you sure you want to log out?", [
+            { text: "Cancel", style: "cancel" },
+            { text: "Logout", style: "destructive", onPress: () => { auth.signOut(); router.replace('/(auth)/login'); } },
+        ]);
+    }, [router]);
 
     useLayoutEffect(() => {
         if (isAdmin) {
@@ -58,12 +86,7 @@ const TablesScreen = () => {
                 elevation: 0,
             });
         } else {
-            const handleLogout = () => {
-                Alert.alert("Logout", "Are you sure you want to log out?", [
-                    { text: "Cancel", style: "cancel" },
-                    { text: "Logout", style: "destructive", onPress: () => { auth.signOut(); router.replace('/(auth)/login'); } },
-                ]);
-            };
+            
             navigation.setOptions({
                 headerTitle: 'Tables',
                 headerLeft: () => null,
@@ -77,19 +100,14 @@ const TablesScreen = () => {
                 headerTitleStyle: { fontWeight: 'bold' },
             });
         }
-    }, [navigation, router, isAdmin]);
+    }, [navigation, router, isAdmin, handleLogout]);
 
 
-    useEffect(() => {
-        fetchTables();
-    }, []);
-
-    const fetchTables = async () => {
-        const tablesCollection = collection(db, 'tables');
-        const tablesSnapshot = await getDocs(tablesCollection);
-        const tablesList = tablesSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Table)).sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }));
-        setTables(tablesList);
-    };
+    useFocusEffect(
+        useCallback(() => {
+            fetchTables();
+        }, [fetchTables])
+    );
 
     const handleAddOrUpdateTable = async () => {
         if (!isAdmin) return;
@@ -163,18 +181,14 @@ const TablesScreen = () => {
         if (isAdmin) {
             viewOrder(table);
         } else {
-            if (table.occupied) {
-                viewOrder(table);
-            } else {
-                router.push({
-                    pathname: '/(main)/pos',
-                    params: {
-                        tableId: table.id,
-                        tableName: table.name,
-                        staff: staffJson,
-                    },
-                });
-            }
+            router.push({
+                pathname: '/(main)/pos',
+                params: {
+                    tableId: table.id,
+                    tableName: table.name,
+                    staff: staffJson,
+                },
+            });
         }
     };
 
@@ -184,6 +198,11 @@ const TablesScreen = () => {
         setSelectedTableForView(table);
         setViewOrderModalVisible(true);
         setCurrentOrderItems([]);
+        setOrderSubtotal(0);
+        setOrderTax(0);
+        setOrderServiceCharge(0);
+        setOrderDiscount(0);
+        setOrderTotal(0);
 
         try {
             const tableDocRef = doc(db, 'tables', table.id);
@@ -191,11 +210,33 @@ const TablesScreen = () => {
 
             if (tableDocSnap.exists()) {
                 const tableData = tableDocSnap.data();
-                const items = (tableData.order || []).map((item: any) => ({
+                const orderData: { food: any; quantity: number; discount: number; }[] = tableData.order || [];
+
+                const fetchedItems: FetchedOrderItem[] = orderData.map((item) => ({
                     ...item.food,
-                    quantity: item.quantity
+                    quantity: item.quantity,
+                    discount: item.discount || 0,
                 }));
-                setCurrentOrderItems(items);
+                
+                const itemsForState: OrderItem[] = fetchedItems.map((item, index) => ({...item, id: `${item.id || `food-${index}`}-${Date.now()}`}));
+                setCurrentOrderItems(itemsForState);
+
+                if (itemsForState.length > 0) {
+                    const subtotal = fetchedItems.reduce((acc: number, item: FetchedOrderItem) => acc + (item.price * item.quantity), 0);
+                    const totalItemDiscount = fetchedItems.reduce((acc: number, item: FetchedOrderItem) => acc + (item.price * item.quantity * (item.discount / 100)), 0);
+
+                    const totalDiscount = totalItemDiscount;
+                    const subtotalAfterDiscounts = subtotal - totalDiscount;
+                    const tax = subtotalAfterDiscounts * 0.10;
+                    const serviceCharge = subtotalAfterDiscounts * 0.10;
+                    const total = subtotalAfterDiscounts + tax + serviceCharge;
+
+                    setOrderSubtotal(subtotal);
+                    setOrderDiscount(totalDiscount);
+                    setOrderTax(tax);
+                    setOrderServiceCharge(serviceCharge);
+                    setOrderTotal(total);
+                }
             } else {
                 console.log(`No such table found: ${table.id}`);
             }
@@ -246,6 +287,116 @@ const TablesScreen = () => {
         </TouchableOpacity>
     );
 
+    const renderAdminModal = () => (
+        <Modal animationType="fade" transparent={true} visible={modalVisible} onRequestClose={closeModal}>
+            <TouchableWithoutFeedback onPress={closeModal}>
+                <View style={styles.centeredView}>
+                    <TouchableWithoutFeedback>
+                        <View style={styles.modalView}>
+                            <Text style={styles.modalTitle}>{editingTable ? 'Edit Table' : 'Add New Table(s)'}</Text>
+                            {!editingTable && (
+                                <View style={styles.modeSelector}>
+                                    <TouchableOpacity style={[styles.modeButton, addMode === 'single' && styles.modeButtonActive]} onPress={() => setAddMode('single')}>
+                                        <Text style={[styles.modeButtonText, addMode === 'single' && styles.modeButtonTextActive]}>Single</Text>
+                                    </TouchableOpacity>
+                                    <TouchableOpacity style={[styles.modeButton, addMode === 'bulk' && styles.modeButtonActive]} onPress={() => setAddMode('bulk')}>
+                                        <Text style={[styles.modeButtonText, addMode === 'bulk' && styles.modeButtonTextActive]}>Bulk</Text>
+                                    </TouchableOpacity>
+                                </View>
+                            )}
+                            {addMode === 'single' || editingTable ? (
+                                <TextInput style={styles.input} placeholder="Table Name" value={tableName} onChangeText={setTableName} autoFocus />
+                            ) : (
+                                <TextInput style={styles.input} placeholder="How many tables to add?" value={numberOfTables} onChangeText={setNumberOfTables} keyboardType="number-pad" autoFocus />
+                            )}
+                            <View style={styles.modalActions}>
+                                <TouchableOpacity style={[styles.button, styles.buttonCancel]} onPress={closeModal}>
+                                    <Text style={styles.buttonText}>Cancel</Text>
+                                </TouchableOpacity>
+                                <TouchableOpacity style={[styles.button, styles.buttonSave]} onPress={handleAddOrUpdateTable}>
+                                    <Text style={styles.buttonText}>{editingTable ? 'Update' : 'Add'}</Text>
+                                </TouchableOpacity>
+                            </View>
+                        </View>
+                    </TouchableWithoutFeedback>
+                </View>
+            </TouchableWithoutFeedback>
+        </Modal>
+    );
+
+    const renderViewOrderModal = () => (
+        <Modal animationType="slide" transparent={true} visible={viewOrderModalVisible} onRequestClose={() => setViewOrderModalVisible(false)}>
+            <TouchableWithoutFeedback onPress={() => setViewOrderModalVisible(false)}>
+                <View style={styles.centeredView}>
+                    <TouchableWithoutFeedback>
+                        <View style={styles.modalView}>
+                            {selectedTableForView && (
+                                <>
+                                    <Text style={styles.modalTitle}>Order: {selectedTableForView.name}</Text>
+                                    {selectedTableForView.occupiedBy && (<Text style={styles.responsibleStaffText}>Served by: {selectedTableForView.occupiedBy}</Text>)}
+                                    
+                                    {loadingOrder ? (
+                                        <ActivityIndicator size="large" color={Colors.light.tint} style={{ marginVertical: 20 }}/>
+                                    ) : (
+                                        <>
+                                            <FlatList
+                                                data={currentOrderItems}
+                                                keyExtractor={(item) => item.id}
+                                                renderItem={({ item }) => (
+                                                    <View style={styles.orderItemContainer}>
+                                                        <Text style={styles.orderItemText} numberOfLines={1}>{item.quantity}x {item.name}</Text>
+                                                        <Text style={styles.orderItemPrice}>₱{(item.price * item.quantity).toFixed(2)}</Text>
+                                                    </View>
+                                                )}
+                                                ListEmptyComponent={<Text style={styles.emptyOrderText}>This table is empty.</Text>}
+                                                style={styles.orderList}
+                                                contentContainerStyle={{ flexGrow: 1 }}
+                                            />
+                                            
+                                            {currentOrderItems.length > 0 && (
+                                                <View style={styles.summaryContainer}>
+                                                    <View style={styles.summaryRow}>
+                                                        <Text style={styles.summaryText}>Subtotal</Text>
+                                                        <Text style={styles.summaryText}>{`₱${orderSubtotal.toFixed(2)}`}</Text>
+                                                    </View>
+                                                    {orderDiscount > 0 && (
+                                                        <View style={styles.summaryRow}>
+                                                            <Text style={[styles.summaryText, {color: 'red'}]}>Discount</Text>
+                                                            <Text style={[styles.summaryText, {color: 'red'}]}>{`-₱${orderDiscount.toFixed(2)}`}</Text>
+                                                        </View>
+                                                    )}
+                                                    <View style={styles.summaryRow}>
+                                                        <Text style={styles.summaryText}>Tax</Text>
+                                                        <Text style={styles.summaryText}>{`₱${orderTax.toFixed(2)}`}</Text>
+                                                    </View>
+                                                    <View style={styles.summaryRow}>
+                                                        <Text style={styles.summaryText}>Service Charge</Text>
+                                                        <Text style={styles.summaryText}>{`₱${orderServiceCharge.toFixed(2)}`}</Text>
+                                                    </View>
+                                                    <View style={styles.summaryRowTotal}>
+                                                        <Text style={styles.totalText}>TOTAL</Text>
+                                                        <Text style={styles.totalText}>{`₱${orderTotal.toFixed(2)}`}</Text>
+                                                    </View>
+                                                </View>
+                                            )}
+                                        </>
+                                    )}
+                                    
+                                    <TouchableOpacity
+                                        style={[styles.button, styles.buttonClose]}
+                                        onPress={() => setViewOrderModalVisible(false)}
+                                    >
+                                        <Text style={styles.buttonText}>Close</Text>
+                                    </TouchableOpacity>
+                                </>
+                            )}
+                        </View>
+                    </TouchableWithoutFeedback>
+                </View>
+            </TouchableWithoutFeedback>
+        </Modal>
+    );
+
     return (
         <View style={styles.container}>
             {isAdmin && (
@@ -264,288 +415,51 @@ const TablesScreen = () => {
                 refreshing={false}
             />
 
-            {isAdmin && (
-                <Modal animationType="fade" transparent={true} visible={modalVisible} onRequestClose={closeModal}>
-                    <TouchableWithoutFeedback onPress={closeModal}>
-                        <View style={styles.centeredView}>
-                            <TouchableWithoutFeedback>
-                                <View style={styles.modalView}>
-                                    <Text style={styles.modalTitle}>{editingTable ? 'Edit Table' : 'Add New Table(s)'}</Text>
-                                    {!editingTable && (
-                                        <View style={styles.modeSelector}>
-                                            <TouchableOpacity style={[styles.modeButton, addMode === 'single' && styles.modeButtonActive]} onPress={() => setAddMode('single')}>
-                                                <Text style={[styles.modeButtonText, addMode === 'single' && styles.modeButtonTextActive]}>Single</Text>
-                                            </TouchableOpacity>
-                                            <TouchableOpacity style={[styles.modeButton, addMode === 'bulk' && styles.modeButtonActive]} onPress={() => setAddMode('bulk')}>
-                                                <Text style={[styles.modeButtonText, addMode === 'bulk' && styles.modeButtonTextActive]}>Bulk</Text>
-                                            </TouchableOpacity>
-                                        </View>
-                                    )}
-
-                                    {addMode === 'single' || editingTable ? (
-                                        <TextInput style={styles.input} placeholder="Table Name" value={tableName} onChangeText={setTableName} autoFocus />
-                                    ) : (
-                                        <TextInput style={styles.input} placeholder="How many tables to add?" value={numberOfTables} onChangeText={setNumberOfTables} keyboardType="number-pad" autoFocus />
-                                    )}
-                                    <View style={styles.modalActions}>
-                                        <TouchableOpacity style={[styles.button, styles.buttonCancel]} onPress={closeModal}>
-                                            <Text style={styles.buttonText}>Cancel</Text>
-                                        </TouchableOpacity>
-                                        <TouchableOpacity style={[styles.button, styles.buttonSave]} onPress={handleAddOrUpdateTable}>
-                                            <Text style={styles.buttonText}>{editingTable ? 'Update' : 'Add'}</Text>
-                                        </TouchableOpacity>
-                                    </View>
-                                </View>
-                            </TouchableWithoutFeedback>
-                        </View>
-                    </TouchableWithoutFeedback>
-                </Modal>
-            )}
-
-            <Modal animationType="slide" transparent={true} visible={viewOrderModalVisible} onRequestClose={() => setViewOrderModalVisible(false)}>
-                <TouchableWithoutFeedback onPress={() => setViewOrderModalVisible(false)}>
-                    <View style={styles.centeredView}>
-                        <TouchableWithoutFeedback>
-                            <View style={styles.modalView}>
-                                {selectedTableForView && (
-                                    <>
-                                        <Text style={styles.modalTitle}>Order: {selectedTableForView.name}</Text>
-                                        {selectedTableForView.occupiedBy && (
-                                            <Text style={styles.responsibleStaffText}>Served by: {selectedTableForView.occupiedBy}</Text>
-                                        )}
-                                        
-                                        {loadingOrder ? (
-                                            <ActivityIndicator size="large" color={Colors.light.tint} style={{ marginVertical: 20 }}/>
-                                        ) : (
-                                            <FlatList
-                                                data={currentOrderItems}
-                                                keyExtractor={(item) => item.id}
-                                                renderItem={({ item }) => (
-                                                    <View style={styles.orderItemContainer}>
-                                                        <Text style={styles.orderItemText} numberOfLines={1}>{item.quantity}x {item.name}</Text>
-                                                        <Text style={styles.orderItemPrice}>₱{(item.price * item.quantity).toFixed(2)}</Text>
-                                                    </View>
-                                                )}
-                                                ListEmptyComponent={<Text style={styles.emptyOrderText}>This table is empty.</Text>}
-                                                style={styles.orderList}
-                                                contentContainerStyle={{ flexGrow: 1 }}
-                                            />
-                                        )}
-                                        
-                                        <TouchableOpacity
-                                            style={[styles.button, styles.buttonClose]}
-                                            onPress={() => setViewOrderModalVisible(false)}
-                                        >
-                                            <Text style={styles.buttonText}>Close</Text>
-                                        </TouchableOpacity>
-                                    </>
-                                )}
-                            </View>
-                        </TouchableWithoutFeedback>
-                    </View>
-                </TouchableWithoutFeedback>
-            </Modal>
+            {isAdmin && renderAdminModal()}
+            {renderViewOrderModal()}
+            
         </View>
     );
 };
 
 const styles = StyleSheet.create({
-    container: {
-        flex: 1,
-        backgroundColor: '#f8f9fa',
-        paddingTop: 10,
-    },
-    manageButton: {
-        backgroundColor: Colors.light.tint,
-        padding: 15,
-        marginHorizontal: 20,
-        marginBottom: 10,
-        borderRadius: 10,
-        alignItems: 'center',
-        shadowColor: "#000",
-        shadowOffset: { width: 0, height: 2 },
-        shadowOpacity: 0.25,
-        shadowRadius: 3.84,
-        elevation: 5,
-    },
-    manageButtonText: {
-        color: 'white',
-        fontSize: 18,
-        fontWeight: 'bold',
-    },
-    tilesContainer: {
-        paddingHorizontal: 5,
-    },
-    tile: {
-        flex: 1,
-        aspectRatio: 1,
-        margin: 5,
-        backgroundColor: 'white',
-        borderRadius: 15,
-        alignItems: 'center',
-        justifyContent: 'center',
-        elevation: 5,
-        borderWidth: 1,
-        borderColor: '#eee',
-        padding: 5,
-        position: 'relative',
-    },
-    occupiedTile: {
-        backgroundColor: '#00156E',
-    },
-    tileText: {
-        marginTop: 8,
-        color: Colors.light.tint,
-        fontSize: 14,
-        fontWeight: '600',
-        textAlign: 'center',
-    },
-    occupiedTileText: {
-        color: 'white',
-    },
-    occupiedByText: {
-        fontSize: 11,
-        color: 'white',
-        marginTop: 2,
-        fontWeight: 'bold',
-        textAlign: 'center',
-    },
-    adminIndicator: {
-        position: 'absolute',
-        top: 5,
-        right: 5,
-        backgroundColor: '#ffc107',
-        borderRadius: 5,
-        paddingHorizontal: 5,
-        paddingVertical: 2,
-    },
-    adminIndicatorText: {
-        color: 'black',
-        fontSize: 10,
-        fontWeight: 'bold',
-    },
-    centeredView: {
-        flex: 1,
-        justifyContent: 'center',
-        alignItems: 'center',
-        backgroundColor: 'rgba(0,0,0,0.4)',
-    },
-    modalView: {
-        margin: 20,
-        backgroundColor: 'white',
-        borderRadius: 20,
-        padding: 25,
-        alignItems: 'center',
-        elevation: 5,
-        width: '90%',
-        maxWidth: 400,
-        maxHeight: '80%',
-    },
-    modalTitle: {
-        marginBottom: 5,
-        textAlign: 'center',
-        fontSize: 22,
-        fontWeight: 'bold',
-    },
-    input: {
-        height: 50,
-        borderColor: '#ccc',
-        borderWidth: 1,
-        marginBottom: 20,
-        width: '100%',
-        padding: 15,
-        borderRadius: 10,
-        fontSize: 16,
-    },
-    modalActions: {
-        flexDirection: 'row',
-        justifyContent: 'space-between',
-        width: '100%',
-        marginTop: 10,
-    },
-    button: {
-        borderRadius: 10,
-        paddingVertical: 15,
-        elevation: 2,
-        flex: 1,
-        alignItems: 'center',
-    },
-    buttonSave: {
-        backgroundColor: Colors.light.tint,
-        marginLeft: 10,
-    },
-    buttonCancel: {
-        backgroundColor: '#6c757d',
-        marginRight: 10,
-    },
-    buttonClose: {
-        backgroundColor: '#6c757d',
-        width: '100%',
-        marginTop: 15,
-    },
-    buttonText: {
-        color: 'white',
-        fontWeight: 'bold',
-        textAlign: 'center',
-        fontSize: 16,
-    },
-    modeSelector: {
-        flexDirection: 'row',
-        justifyContent: 'center',
-        marginBottom: 20,
-        backgroundColor: '#f0f0f0',
-        borderRadius: 10,
-    },
-    modeButton: {
-        paddingVertical: 10,
-        paddingHorizontal: 30,
-        borderRadius: 10,
-    },
-    modeButtonActive: {
-        backgroundColor: Colors.light.tint,
-    },
-    modeButtonText: {
-        color: '#333',
-        fontWeight: 'bold',
-        fontSize: 16,
-    },
-    modeButtonTextActive: {
-        color: 'white',
-    },
-    responsibleStaffText: {
-        fontSize: 16,
-        color: '#666',
-        marginBottom: 20,
-        fontStyle: 'italic',
-    },
-    orderList: {
-        width: '100%',
-        marginBottom: 10,
-    },
-    orderItemContainer: {
-        flexDirection: 'row',
-        justifyContent: 'space-between',
-        paddingVertical: 12,
-        borderBottomWidth: 1,
-        borderBottomColor: '#eee',
-        width: '100%',
-    },
-    orderItemText: {
-        fontSize: 16,
-        color: '#333',
-        flex: 1,
-    },
-    orderItemPrice: {
-        fontSize: 16,
-        fontWeight: 'bold',
-        color: Colors.light.tint,
-    },
-    emptyOrderText: {
-        textAlign: 'center',
-        marginTop: 20,
-        fontSize: 16,
-        color: '#888'
-    }
+    container: { flex: 1, backgroundColor: '#f8f9fa', paddingTop: 10, },
+    manageButton: { backgroundColor: Colors.light.tint, padding: 15, marginHorizontal: 20, marginBottom: 10, borderRadius: 10, alignItems: 'center', shadowColor: "#000", shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.25, shadowRadius: 3.84, elevation: 5, },
+    manageButtonText: { color: 'white', fontSize: 18, fontWeight: 'bold', },
+    tilesContainer: { paddingHorizontal: 5, },
+    tile: { flex: 1, aspectRatio: 1, margin: 5, backgroundColor: 'white', borderRadius: 15, alignItems: 'center', justifyContent: 'center', elevation: 5, borderWidth: 1, borderColor: '#eee', padding: 5, position: 'relative', },
+    occupiedTile: { backgroundColor: '#00156E', },
+    tileText: { marginTop: 8, color: Colors.light.tint, fontSize: 14, fontWeight: '600', textAlign: 'center', },
+    occupiedTileText: { color: 'white', },
+    occupiedByText: { fontSize: 11, color: 'white', marginTop: 2, fontWeight: 'bold', textAlign: 'center', },
+    adminIndicator: { position: 'absolute', top: 5, right: 5, backgroundColor: '#ffc107', borderRadius: 5, paddingHorizontal: 5, paddingVertical: 2, },
+    adminIndicatorText: { color: 'black', fontSize: 10, fontWeight: 'bold', },
+    centeredView: { flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: 'rgba(0,0,0,0.4)', },
+    modalView: { margin: 20, backgroundColor: 'white', borderRadius: 20, padding: 25, alignItems: 'center', elevation: 5, width: '90%', maxWidth: 400, maxHeight: '80%', },
+    modalTitle: { marginBottom: 5, textAlign: 'center', fontSize: 22, fontWeight: 'bold', },
+    input: { height: 50, borderColor: '#ccc', borderWidth: 1, marginBottom: 20, width: '100%', padding: 15, borderRadius: 10, fontSize: 16, },
+    modalActions: { flexDirection: 'row', justifyContent: 'space-between', width: '100%', marginTop: 10, },
+    button: { borderRadius: 10, paddingVertical: 15, elevation: 2, flex: 1, alignItems: 'center', },
+    buttonSave: { backgroundColor: Colors.light.tint, marginLeft: 10, },
+    buttonCancel: { backgroundColor: '#6c757d', marginRight: 10, },
+    buttonClose: { backgroundColor: '#6c757d', width: '100%', marginTop: 15, flex: 0, },
+    buttonText: { color: 'white', fontWeight: 'bold', textAlign: 'center', fontSize: 16, },
+    modeSelector: { flexDirection: 'row', justifyContent: 'center', marginBottom: 20, backgroundColor: '#f0f0f0', borderRadius: 20, padding: 4, },
+    modeButton: { paddingVertical: 8, paddingHorizontal: 25, borderRadius: 16, },
+    modeButtonActive: { backgroundColor: Colors.light.tint, },
+    modeButtonText: { color: '#333', fontWeight: 'bold', fontSize: 16, },
+    modeButtonTextActive: { color: 'white', },
+    responsibleStaffText: { fontSize: 16, color: '#666', marginBottom: 20, fontStyle: 'italic', },
+    orderList: { width: '100%', maxHeight: '50%', marginBottom: 10, },
+    orderItemContainer: { flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: '#eee', width: '100%', },
+    orderItemText: { fontSize: 16, color: '#333', flex: 1, },
+    orderItemPrice: { fontSize: 16, fontWeight: 'bold', color: Colors.light.tint, },
+    emptyOrderText: { textAlign: 'center', marginTop: 20, fontSize: 16, color: '#888' },
+    summaryContainer: { width: '100%', marginTop: 'auto', paddingTop: 10, borderTopWidth: 1, borderTopColor: '#ccc' },
+    summaryRow: { flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 4, },
+    summaryText: { fontSize: 15, color: '#444' },
+    summaryRowTotal: { flexDirection: 'row', justifyContent: 'space-between', marginTop: 10, borderTopWidth: 2, paddingTop: 8, borderColor: '#333' },
+    totalText: { fontWeight: 'bold', fontSize: 18, color: '#000' },
 });
 
 export default TablesScreen;

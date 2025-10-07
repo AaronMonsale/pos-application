@@ -69,6 +69,10 @@ const PosScreen = () => {
   const [selectedStaffForLogin, setSelectedStaffForLogin] = useState<Staff | null>(null);
   const [enteredPin, setEnteredPin] = useState('');
   const isSystemLocked = !currentStaff;
+  
+  const handleBack = () => {
+    router.push({ pathname: '/(main)/tables', params: { staff: JSON.stringify(currentStaff) } });
+  }
 
   useFocusEffect(
     useCallback(() => {
@@ -86,6 +90,14 @@ const PosScreen = () => {
                 const allStaff = staffSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Staff));
                 setStaffList(allStaff);
 
+                if (staffJson && !currentStaff) {
+                    try {
+                        setCurrentStaff(JSON.parse(staffJson));
+                    } catch (e) {
+                        console.error("Failed to parse staff JSON", e);
+                    }
+                }
+
                 if (tableId) {
                     const tableDocSnap = await getDoc(doc(db, 'tables', tableId));
                     if (tableDocSnap.exists()) {
@@ -98,15 +110,7 @@ const PosScreen = () => {
                             id: `${item.food.id}-${Date.now()}-${index}`
                         }));
                         setOrderItems(initialOrder);
-
-                        if (tableData.occupied && tableData.staffId) {
-                            setCurrentStaff(allStaff.find(s => s.id === tableData.staffId) || (staffJson ? JSON.parse(staffJson) : null));
-                        } else {
-                            setCurrentStaff(staffJson ? JSON.parse(staffJson) : null);
-                        }
                     }
-                } else {
-                     setCurrentStaff(staffJson ? JSON.parse(staffJson) : null);
                 }
             } catch (error) {
                 console.error("Failed to fetch data:", error);
@@ -114,7 +118,7 @@ const PosScreen = () => {
             }
         };
         fetchData();
-    }, [tableId, staffJson])
+    }, [tableId])
   );
     
   useEffect(() => {
@@ -143,7 +147,7 @@ const PosScreen = () => {
             const tableDoc = doc(db, 'tables', tableId);
             await updateDoc(tableDoc, { occupied: false, occupiedBy: null, staffId: null, order: [], });
             Alert.alert("Table Cleared", `${tableName} is now available.`, [
-                { text: "OK", onPress: () => router.replace({ pathname: '/(main)/tables', params: { staff: JSON.stringify(currentStaff) } }) }
+                { text: "OK", onPress: handleBack }
             ]);
         } catch (error) { console.error("Error clearing order: ", error); Alert.alert("Error", "Could not clear the order from the table."); }
         return;
@@ -154,7 +158,7 @@ const PosScreen = () => {
         const orderToSave = orderItems.map(item => ({ food: item.food, quantity: item.quantity, discount: item.discount || null, note: item.note || '', }));
         await updateDoc(tableDoc, { occupied: true, occupiedBy: currentStaff.name, staffId: currentStaff.id, order: orderToSave, });
         Alert.alert("Order Saved", `The order has been saved to ${tableName}.`, [
-            { text: "OK", onPress: () => router.replace({ pathname: '/(main)/tables', params: { staff: JSON.stringify(currentStaff) } }) }
+            { text: "OK", onPress: handleBack }
         ]);
     } catch (error) { console.error("Error saving order: ", error); Alert.alert("Error", "Could not save the order to the table."); }
   };
@@ -167,12 +171,34 @@ const PosScreen = () => {
         if (tableId) {
             await updateDoc(doc(db, 'tables', tableId), { occupied: false, occupiedBy: null, staffId: null, order: [], });
         }
-        router.replace({ pathname: '/(main)/summary', params: { orderItems: JSON.stringify(transactionItems), subtotal: subtotal.toString(), tax: tax.toString(), serviceCharge: serviceCharge.toString(), discountAmount: discountAmount.toString(), total: total.toString(), staffName: currentStaff?.name || 'N/A', tableName: tableName || 'N/A' } });
+        router.replace({ 
+            pathname: '/(main)/summary', 
+            params: { 
+                orderItems: JSON.stringify(transactionItems), 
+                subtotal: subtotal.toString(), 
+                tax: tax.toString(), 
+                serviceCharge: serviceCharge.toString(), 
+                discountAmount: discountAmount.toString(), 
+                total: total.toString(), 
+                staffName: currentStaff?.name || 'N/A', 
+                tableName: tableName || 'N/A',
+                staff: JSON.stringify(currentStaff)
+            } 
+        });
     } catch (error) { console.error("Error processing payment: ", error); Alert.alert("Payment Error", "There was an error processing the payment."); }
   };
 
   const handleCategoryPress = async (category: Category) => { if (isSystemLocked) return; const foodsSnapshot = await getDocs(collection(doc(db, 'categories', category.id), 'foods')); const foodsList = foodsSnapshot.docs.map(foodDoc => ({ id: foodDoc.id, ...foodDoc.data(), categoryId: category.id } as Food)); setSelectedCategory({ ...category, foods: foodsList }); setIsModalVisible(true); };
-  const addToOrder = (food: Food) => { const existingItem = orderItems.find(item => item.food.id === food.id); if (existingItem) { incrementQuantity(existingItem.id); } else { setOrderItems(prevItems => [...prevItems, { id: `${food.id}-${Date.now()}`, food, quantity: 1 }]); }};
+  
+  const addToOrder = (food: Food) => {
+    const existingItem = orderItems.find(item => item.food.id === food.id && !item.discount);
+    if (existingItem) {
+        incrementQuantity(existingItem.id);
+    } else {
+        setOrderItems(prevItems => [...prevItems, { id: `${food.id}-${Date.now()}`, food, quantity: 1, discount: null, note: '' }]);
+    }
+  };
+
   const incrementQuantity = (itemId: string) => { setOrderItems(prevItems => prevItems.map(item => item.id === itemId ? { ...item, quantity: item.quantity + 1 } : item)); };
   const decrementQuantity = (itemId: string) => { setOrderItems(prevItems => { const existingItem = prevItems.find(item => item.id === itemId); if (existingItem && existingItem.quantity > 1) { return prevItems.map(item => item.id === itemId ? { ...item, quantity: item.quantity - 1 } : item); } else { return prevItems.filter(item => item.id !== itemId); } }); };
   const removeItem = (itemId: string) => { setOrderItems(prevItems => prevItems.filter(item => item.id !== itemId)); };
@@ -452,7 +478,7 @@ const PosScreen = () => {
           <View style={styles.header}>
               <TouchableOpacity
                   style={styles.headerBackButton}
-                  onPress={() => router.replace({ pathname: '/(main)/tables', params: { staff: JSON.stringify(currentStaff) } })}
+                  onPress={handleBack}
               >
                   <Ionicons name="arrow-back-outline" size={24} color="white" />
               </TouchableOpacity>
@@ -544,7 +570,7 @@ const styles = StyleSheet.create({
     orderTitle: { fontSize: 18, fontWeight: 'bold', marginBottom: 10 },
     orderItem: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: '#eee' },
     orderItemName: { fontSize: 16, fontWeight: 'bold' },
-    orderItemPrice: { fontSize: 14, color: 'gray' },
+    orderItemPrice: { fontSize: 14, color: 'black' },
     itemDiscountText: { fontSize: 12, color: 'green' },
     itemNoteText: { fontSize: 12, color: 'blue' },
     quantityControl: { flexDirection: 'row', alignItems: 'center' },
