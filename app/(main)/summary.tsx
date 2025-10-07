@@ -1,106 +1,175 @@
-import { Ionicons } from '@expo/vector-icons';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import React from 'react';
-import { FlatList, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { FlatList, SafeAreaView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { Colors } from '../../constants/theme';
-
-interface Item {
-    id: string;
-    name: string;
-    price: number;
-    quantity: number;
-    discount: number;
-    total: number;
-}
 
 const SummaryScreen = () => {
     const router = useRouter();
     const params = useLocalSearchParams();
     const {
-        orderItems: itemsJson,
-        subtotal: subtotalString,
-        tax: taxString,
-        serviceCharge: serviceChargeString,
-        discountAmount: discountAmountString,
-        total: totalString,
-        staffName,
-        tableName,
-        staff: staffJson,
+        items: itemsJson = '[]',
+        subtotal = '0',
+        discount = '0',
+        tax = '0',
+        serviceCharge = '0',
+        total = '0',
+        staffName = '',
+        tableName = ''
     } = params;
 
-    const items: Item[] = itemsJson ? JSON.parse(itemsJson as string) : [];
-    const subtotal = subtotalString ? parseFloat(subtotalString as string) : 0;
-    const tax = taxString ? parseFloat(taxString as string) : 0;
-    const serviceCharge = serviceChargeString ? parseFloat(serviceChargeString as string) : 0;
-    const discountAmount = discountAmountString ? parseFloat(discountAmountString as string) : 0;
-    const total = totalString ? parseFloat(totalString as string) : 0;
+    const items = JSON.parse(itemsJson as string);
 
-    const handleDone = () => {
-        router.replace({ pathname: '/(main)/tables', params: { staff: staffJson } });
-    };
-
-    const renderOrderItem = ({ item }: { item: Item }) => (
-        <View style={styles.itemContainer}>
-            <Text style={styles.itemName}>{item.quantity}x {item.name}</Text>
-            {item.discount > 0 && (
-                 <Text style={styles.itemDiscount}>Discount: {item.discount}%</Text>
-            )}
-            <Text style={styles.itemTotal}>₱{item.total.toFixed(2)}</Text>
+    const renderOrderItem = ({ item }: { item: any }) => (
+        <View style={styles.itemRow}>
+            <View>
+                <Text style={styles.itemName}>{`${item.name} x${item.quantity}`}</Text>
+                {item.discount > 0 && (
+                    <Text style={styles.itemDiscount}>
+                        {`Discount: ${item.discount}%`}
+                    </Text>
+                )}
+            </View>
+            <Text style={styles.itemTotal}>{`₱${item.total.toFixed(2)}`}</Text>
         </View>
     );
 
     return (
         <SafeAreaView style={styles.container}>
-            <View style={styles.card}>
-                <Ionicons name="checkmark-circle" size={80} color="green" style={{ alignSelf: 'center' }} />
-                <Text style={styles.title}>Payment Successful!</Text>
-                <Text style={styles.subtitle}>Order for {tableName}</Text>
-                
-                <FlatList
-                    data={items}
-                    renderItem={renderOrderItem}
-                    keyExtractor={(item, index) => `${item.id}-${index}`}
-                    style={styles.list}
-                />
-
-                <View style={styles.summaryContainer}>
-                    <View style={styles.summaryRow}><Text>Subtotal</Text><Text>₱{subtotal.toFixed(2)}</Text></View>
-                    {discountAmount > 0 && (
-                        <View style={styles.summaryRow}><Text style={{color: 'red'}}>Discount</Text><Text style={{color: 'red'}}>-₱{discountAmount.toFixed(2)}</Text></View>
-                    )}
-                    <View style={styles.summaryRow}><Text>Tax</Text><Text>₱{tax.toFixed(2)}</Text></View>
-                    <View style={styles.summaryRow}><Text>Service Charge</Text><Text>₱{serviceCharge.toFixed(2)}</Text></View>
-                    <View style={styles.totalRow}><Text style={styles.totalText}>Total</Text><Text style={styles.totalText}>₱{total.toFixed(2)}</Text></View>
-                </View>
-
-                <Text style={styles.footerText}>Served by: {staffName}</Text>
-                
-                <TouchableOpacity style={styles.doneButton} onPress={handleDone}>
-                    <Text style={styles.doneButtonText}>Done</Text>
-                </TouchableOpacity>
+            <View style={styles.header}>
+                <Text style={styles.headerTitle}>Transaction Summary</Text>
             </View>
+            <View style={styles.detailsContainer}>
+                <Text style={styles.detailText}>{`Staff: ${staffName as string}`}</Text>
+                <Text style={styles.detailText}>{`Table: ${tableName as string}`}</Text>
+            </View>
+            <FlatList
+                data={items}
+                renderItem={renderOrderItem}
+                keyExtractor={(item, index) => index.toString()}
+                style={styles.list}
+            />
+            <View style={styles.summaryContainer}>
+                <View style={styles.summaryRow}>
+                    <Text style={{fontSize: 16}}>Subtotal</Text>
+                    <Text style={{fontSize: 16}}>{`₱${parseFloat(subtotal as string).toFixed(2)}`}</Text>
+                </View>
+                {parseFloat(discount as string) > 0 && (
+                     <View style={styles.summaryRow}>
+                        <Text style={styles.discountText}>Discount</Text>
+                        <Text style={styles.discountText}>{`-₱${parseFloat(discount as string).toFixed(2)}`}</Text>
+                    </View>
+                )}
+                <View style={styles.summaryRow}>
+                    <Text style={{fontSize: 16}}>Tax</Text>
+                    <Text style={{fontSize: 16}}>{`₱${parseFloat(tax as string).toFixed(2)}`}</Text>
+                </View>
+                <View style={styles.summaryRow}>
+                    <Text style={{fontSize: 16}}>Service Charge</Text>
+                    <Text style={{fontSize: 16}}>{`₱${parseFloat(serviceCharge as string).toFixed(2)}`}</Text>
+                </View>
+                <View style={styles.totalRow}>
+                    <Text style={styles.totalText}>TOTAL</Text>
+                    <Text style={styles.totalText}>{`₱${parseFloat(total as string).toFixed(2)}`}</Text>
+                </View>
+            </View>
+            <TouchableOpacity
+                style={styles.doneButton}
+                onPress={() => router.back()}
+            >
+                <Text style={styles.doneButtonText}>Done</Text>
+            </TouchableOpacity>
         </SafeAreaView>
     );
 };
 
 const styles = StyleSheet.create({
-    container: { flex: 1, backgroundColor: Colors.light.tint, justifyContent: 'center', alignItems: 'center' },
-    card: { backgroundColor: 'white', borderRadius: 20, padding: 25, width: '90%', maxWidth: 400, shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.25, shadowRadius: 3.84, elevation: 5, },
-    title: { fontSize: 24, fontWeight: 'bold', textAlign: 'center', marginVertical: 10, },
-    subtitle: { fontSize: 16, color: '#666', textAlign: 'center', marginBottom: 20, },
-    list: { maxHeight: 200, marginBottom: 20, },
-    itemContainer: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 8, borderBottomWidth: 1, borderBottomColor: '#eee', },
-    itemName: { flex: 1, fontSize: 16, },
-    itemDiscount: { fontSize: 14, color: 'red', marginLeft: 8 },
-    itemTotal: { fontSize: 16, fontWeight: 'bold', },
-    summaryContainer: { borderTopWidth: 1, borderTopColor: '#eee', paddingTop: 15, },
-    summaryRow: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 8, },
-    totalRow: { flexDirection: 'row', justifyContent: 'space-between', marginTop: 10, paddingTop: 10, borderTopWidth: 2, borderTopColor: '#333', },
-    totalText: { fontSize: 18, fontWeight: 'bold', },
-    footerText: { textAlign: 'center', color: '#888', marginTop: 20, },
-    doneButton: { backgroundColor: Colors.light.tint, padding: 15, borderRadius: 10, marginTop: 20, alignItems: 'center', },
-    doneButtonText: { color: 'white', fontSize: 18, fontWeight: 'bold', },
+    container: {
+        flex: 1,
+        backgroundColor: '#f8f9fa',
+    },
+    header: {
+        backgroundColor: Colors.light.tint,
+        padding: 20,
+        alignItems: 'center',
+    },
+    headerTitle: {
+        color: 'white',
+        fontSize: 22,
+        fontWeight: 'bold',
+    },
+    detailsContainer: {
+        padding: 20,
+        borderBottomWidth: 1,
+        borderBottomColor: '#eee',
+    },
+    detailText: {
+        fontSize: 16,
+        marginBottom: 5,
+    },
+    list: {
+        flex: 1,
+    },
+    itemRow: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        paddingHorizontal: 20,
+        paddingVertical: 15,
+        backgroundColor: 'white',
+        borderBottomWidth: 1,
+        borderBottomColor: '#eee',
+    },
+    itemName: {
+        fontSize: 16,
+        fontWeight: '500',
+    },
+    itemDiscount: {
+        fontSize: 14,
+        color: 'green',
+        marginTop: 2,
+    },
+    itemTotal: {
+        fontSize: 16,
+        fontWeight: 'bold',
+    },
+    summaryContainer: {
+        padding: 20,
+        backgroundColor: 'white',
+        borderTopWidth: 1,
+        borderTopColor: '#eee',
+    },
+    summaryRow: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        marginBottom: 10,
+    },
+    discountText: {
+        color: 'red',
+        fontSize: 16,
+    },
+    totalRow: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        marginTop: 10,
+        paddingTop: 10,
+        borderTopWidth: 1,
+        borderTopColor: '#eee',
+    },
+    totalText: {
+        fontSize: 18,
+        fontWeight: 'bold',
+    },
+    doneButton: {
+        backgroundColor: Colors.light.tint,
+        padding: 20,
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    doneButtonText: {
+        color: 'white',
+        fontSize: 18,
+        fontWeight: 'bold',
+    },
 });
 
 export default SummaryScreen;

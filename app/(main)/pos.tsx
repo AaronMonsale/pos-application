@@ -71,7 +71,7 @@ const PosScreen = () => {
   const isSystemLocked = !currentStaff;
   
   const handleBack = () => {
-    router.push({ pathname: '/(main)/tables', params: { staff: JSON.stringify(currentStaff) } });
+    router.back();
   }
 
   useFocusEffect(
@@ -174,15 +174,14 @@ const PosScreen = () => {
         router.replace({ 
             pathname: '/(main)/summary', 
             params: { 
-                orderItems: JSON.stringify(transactionItems), 
+                items: JSON.stringify(transactionItems), 
                 subtotal: subtotal.toString(), 
                 tax: tax.toString(), 
                 serviceCharge: serviceCharge.toString(), 
-                discountAmount: discountAmount.toString(), 
+                discount: discountAmount.toString(), 
                 total: total.toString(), 
                 staffName: currentStaff?.name || 'N/A', 
                 tableName: tableName || 'N/A',
-                staff: JSON.stringify(currentStaff)
             } 
         });
     } catch (error) { console.error("Error processing payment: ", error); Alert.alert("Payment Error", "There was an error processing the payment."); }
