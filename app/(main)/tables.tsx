@@ -218,12 +218,12 @@ const TablesScreen = () => {
                     discount: item.discount || 0,
                 }));
                 
-                const itemsForState: OrderItem[] = fetchedItems.map((item, index) => ({...item, id: `${item.id || `food-${index}`}-${Date.now()}`}));
+                const itemsForState: OrderItem[] = fetchedItems.map((item, index) => ({...item, id: `${item.id || 'food'}-${index}`}));
                 setCurrentOrderItems(itemsForState);
 
                 if (itemsForState.length > 0) {
                     const subtotal = fetchedItems.reduce((acc: number, item: FetchedOrderItem) => acc + (item.price * item.quantity), 0);
-                    const totalItemDiscount = fetchedItems.reduce((acc: number, item: FetchedOrderItem) => acc + (item.price * item.quantity * (item.discount / 100)), 0);
+                    const totalItemDiscount = fetchedItems.reduce((acc: number, item: FetchedOrderItem) => acc + (item.price * item.quantity * ((item.discount || 0) / 100)), 0);
 
                     const totalDiscount = totalItemDiscount;
                     const subtotalAfterDiscounts = subtotal - totalDiscount;
@@ -282,8 +282,8 @@ const TablesScreen = () => {
         >
             <Ionicons name="grid-outline" size={32} color={item.occupied ? 'white' : Colors.light.tint} />
             <Text style={[styles.tileText, item.occupied && styles.occupiedTileText]}>{item.name}</Text>
-            {item.occupied && item.occupiedBy && (<Text style={styles.occupiedByText} numberOfLines={1}>by {item.occupiedBy}</Text>)}
-            {isAdmin && <View style={styles.adminIndicator}><Text style={styles.adminIndicatorText}>Manage</Text></View>}
+            {item.occupied && item.occupiedBy ? (<Text style={styles.occupiedByText} numberOfLines={1}>{`by ${item.occupiedBy}`}</Text>) : null}
+            {isAdmin ? <View style={styles.adminIndicator}><Text style={styles.adminIndicatorText}>Manage</Text></View> : null}
         </TouchableOpacity>
     );
 
@@ -294,7 +294,7 @@ const TablesScreen = () => {
                     <TouchableWithoutFeedback>
                         <View style={styles.modalView}>
                             <Text style={styles.modalTitle}>{editingTable ? 'Edit Table' : 'Add New Table(s)'}</Text>
-                            {!editingTable && (
+                            {!editingTable ? (
                                 <View style={styles.modeSelector}>
                                     <TouchableOpacity style={[styles.modeButton, addMode === 'single' && styles.modeButtonActive]} onPress={() => setAddMode('single')}>
                                         <Text style={[styles.modeButtonText, addMode === 'single' && styles.modeButtonTextActive]}>Single</Text>
@@ -303,7 +303,7 @@ const TablesScreen = () => {
                                         <Text style={[styles.modeButtonText, addMode === 'bulk' && styles.modeButtonTextActive]}>Bulk</Text>
                                     </TouchableOpacity>
                                 </View>
-                            )}
+                            ) : null}
                             {addMode === 'single' || editingTable ? (
                                 <TextInput style={styles.input} placeholder="Table Name" value={tableName} onChangeText={setTableName} autoFocus />
                             ) : (
@@ -330,10 +330,10 @@ const TablesScreen = () => {
                 <View style={styles.centeredView}>
                     <TouchableWithoutFeedback>
                         <View style={styles.modalView}>
-                            {selectedTableForView && (
+                            {selectedTableForView ? (
                                 <>
-                                    <Text style={styles.modalTitle}>Order: {selectedTableForView.name}</Text>
-                                    {selectedTableForView.occupiedBy && (<Text style={styles.responsibleStaffText}>Served by: {selectedTableForView.occupiedBy}</Text>)}
+                                    <Text style={styles.modalTitle}>{`Order: ${selectedTableForView.name}`}</Text>
+                                    {selectedTableForView.occupiedBy ? (<Text style={styles.responsibleStaffText}>{`Served by: ${selectedTableForView.occupiedBy}`}</Text>) : null}
                                     
                                     {loadingOrder ? (
                                         <ActivityIndicator size="large" color={Colors.light.tint} style={{ marginVertical: 20 }}/>
@@ -342,29 +342,37 @@ const TablesScreen = () => {
                                             <FlatList
                                                 data={currentOrderItems}
                                                 keyExtractor={(item) => item.id}
-                                                renderItem={({ item }) => (
-                                                    <View style={styles.orderItemContainer}>
-                                                        <Text style={styles.orderItemText} numberOfLines={1}>{item.quantity}x {item.name}</Text>
-                                                        <Text style={styles.orderItemPrice}>₱{(item.price * item.quantity).toFixed(2)}</Text>
-                                                    </View>
-                                                )}
+                                                renderItem={({ item }) => {
+                                                    const finalPrice = (item.price * item.quantity) * (1 - (item.discount || 0) / 100);
+                                                    return (
+                                                        <View style={styles.orderItemContainer}>
+                                                            <View style={{ flex: 1, marginRight: 8 }}>
+                                                                <Text style={styles.orderItemText} numberOfLines={1}>{`${item.quantity}x ${item.name}`}</Text>
+                                                                {item.discount && item.discount > 0 ? (
+                                                                    <Text style={styles.discountTag}>{`${item.discount}% off`}</Text>
+                                                                ) : null}
+                                                            </View>
+                                                            <Text style={styles.orderItemPrice}>{`₱${finalPrice.toFixed(2)}`}</Text>
+                                                        </View>
+                                                    );
+                                                }}
                                                 ListEmptyComponent={<Text style={styles.emptyOrderText}>This table is empty.</Text>}
                                                 style={styles.orderList}
                                                 contentContainerStyle={{ flexGrow: 1 }}
                                             />
                                             
-                                            {currentOrderItems.length > 0 && (
+                                            {currentOrderItems.length > 0 ? (
                                                 <View style={styles.summaryContainer}>
                                                     <View style={styles.summaryRow}>
                                                         <Text style={styles.summaryText}>Subtotal</Text>
                                                         <Text style={styles.summaryText}>{`₱${orderSubtotal.toFixed(2)}`}</Text>
                                                     </View>
-                                                    {orderDiscount > 0 && (
+                                                    {orderDiscount > 0 ? (
                                                         <View style={styles.summaryRow}>
                                                             <Text style={[styles.summaryText, {color: 'red'}]}>Discount</Text>
                                                             <Text style={[styles.summaryText, {color: 'red'}]}>{`-₱${orderDiscount.toFixed(2)}`}</Text>
                                                         </View>
-                                                    )}
+                                                    ) : null}
                                                     <View style={styles.summaryRow}>
                                                         <Text style={styles.summaryText}>Tax</Text>
                                                         <Text style={styles.summaryText}>{`₱${orderTax.toFixed(2)}`}</Text>
@@ -378,7 +386,7 @@ const TablesScreen = () => {
                                                         <Text style={styles.totalText}>{`₱${orderTotal.toFixed(2)}`}</Text>
                                                     </View>
                                                 </View>
-                                            )}
+                                            ) : null}
                                         </>
                                     )}
                                     
@@ -389,7 +397,7 @@ const TablesScreen = () => {
                                         <Text style={styles.buttonText}>Close</Text>
                                     </TouchableOpacity>
                                 </>
-                            )}
+                            ) : null}
                         </View>
                     </TouchableWithoutFeedback>
                 </View>
@@ -399,12 +407,11 @@ const TablesScreen = () => {
 
     return (
         <View style={styles.container}>
-            {isAdmin && (
+            {isAdmin ? (
                 <TouchableOpacity style={styles.manageButton} onPress={openAddModal}>
                     <Text style={styles.manageButtonText}>Add New Table(s)</Text>
                 </TouchableOpacity>
-            )}
-
+            ) : null}
             <FlatList
                 data={tables}
                 renderItem={renderTableItem}
@@ -414,10 +421,8 @@ const TablesScreen = () => {
                 onRefresh={fetchTables}
                 refreshing={false}
             />
-
-            {isAdmin && renderAdminModal()}
+            {isAdmin ? renderAdminModal() : null}
             {renderViewOrderModal()}
-            
         </View>
     );
 };
@@ -460,6 +465,12 @@ const styles = StyleSheet.create({
     summaryText: { fontSize: 15, color: '#444' },
     summaryRowTotal: { flexDirection: 'row', justifyContent: 'space-between', marginTop: 10, borderTopWidth: 2, paddingTop: 8, borderColor: '#333' },
     totalText: { fontWeight: 'bold', fontSize: 18, color: '#000' },
+    discountTag: {
+        fontSize: 12,
+        color: 'red',
+        fontStyle: 'italic',
+        marginTop: 2,
+    },
 });
 
 export default TablesScreen;
