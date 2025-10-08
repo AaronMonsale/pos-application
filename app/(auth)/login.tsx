@@ -1,7 +1,7 @@
 import { useRouter } from "expo-router";
 import { signInWithEmailAndPassword } from "firebase/auth";
-import { doc, getDoc } from "firebase/firestore";
-import React, { useState } from "react";
+import { collection, doc, getDoc, getDocs, limit, query } from "firebase/firestore";
+import React, { useEffect, useState } from "react";
 import { Alert, Image, StyleSheet, Text, TextInput, TouchableOpacity, View } from "react-native";
 import { Colors } from '../../constants/theme';
 import { auth, db } from "../../firebase";
@@ -9,7 +9,26 @@ import { auth, db } from "../../firebase";
 const Login = () => {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [showRegisterButton, setShowRegisterButton] = useState(false);
   const router = useRouter();
+
+  useEffect(() => {
+    const checkUsers = async () => {
+      try {
+        const usersCollection = collection(db, "users");
+        const q = query(usersCollection, limit(1));
+        const snapshot = await getDocs(q);
+        if (snapshot.empty) {
+          setShowRegisterButton(true);
+        }
+      } catch (error) {
+        console.error("Error checking for users:", error);
+        Alert.alert("Error", "Could not check for existing users.");
+      }
+    };
+
+    checkUsers();
+  }, []);
 
   const handleLogin = async () => {
     try {
@@ -61,9 +80,11 @@ const Login = () => {
       <TouchableOpacity style={styles.button} onPress={handleLogin}>
         <Text style={styles.buttonText}>Login</Text>
       </TouchableOpacity>
-      <TouchableOpacity style={[styles.button, styles.registerButton]} onPress={() => router.push("/(auth)/register")}>
-        <Text style={[styles.buttonText, styles.registerButtonText]}>Register</Text>
-      </TouchableOpacity>
+      {showRegisterButton && (
+        <TouchableOpacity style={[styles.button, styles.registerButton]} onPress={() => router.push("/(auth)/register")}>
+          <Text style={[styles.buttonText, styles.registerButtonText]}>Register</Text>
+        </TouchableOpacity>
+      )}
     </View>
   );
 };
