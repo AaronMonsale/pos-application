@@ -8,6 +8,8 @@ import { Colors } from "../../constants/theme";
 const modules = [
   // Replaced "User & Role" with "Manage Staff"
   { name: "Manage Staff", icon: "people-outline" as const, route: "/(main)/staff" },
+  // Added "User Management"
+  { name: "User Management", icon: "person-circle-outline" as const, route: "/(main)/user-management" },
   // Added "Manage Tables"
   { name: "Manage Tables", icon: "grid-outline" as const, route: { pathname: '/(main)/tables', params: { admin: 'true' } } },
   { name: "Menu", icon: "restaurant-outline" as const, route: "/(main)/menu" },

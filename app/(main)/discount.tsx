@@ -1,5 +1,5 @@
 import DateTimePicker from '@react-native-community/datetimepicker';
-import { addDoc, collection, deleteDoc, doc, getDoc, getDocs, Timestamp } from 'firebase/firestore';
+import { addDoc, collection, deleteDoc, doc, getDoc, getDocs, Timestamp, query, where, updateDoc, serverTimestamp } from 'firebase/firestore';
 import React, { useEffect, useState } from 'react';
 import { Alert, FlatList, KeyboardAvoidingView, Modal, Platform, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import MultiSelect from 'react-native-multiple-select';
@@ -24,6 +24,7 @@ interface Discount {
   expirationDate: Timestamp;
   categories?: string[];
   foods?: string[];
+  deletedAt?: Date | null;
 }
 
 const DiscountScreen = () => {
@@ -49,7 +50,7 @@ const DiscountScreen = () => {
   const [selectedFoods, setSelectedFoods] = useState<string[]>([]);
 
   const fetchDiscounts = async () => {
-    const discountsCollection = collection(db, 'discounts');
+    const discountsCollection = query(collection(db, 'discounts'), where("deletedAt", "==", null));
     const discountSnapshot = await getDocs(discountsCollection);
     const discountsList = discountSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Discount));
     setDiscounts(discountsList);
@@ -58,7 +59,7 @@ const DiscountScreen = () => {
   useEffect(() => {
     if (modalVisible) {
       const fetchCategories = async () => {
-        const categoriesCollection = collection(db, 'categories');
+        const categoriesCollection = query(collection(db, 'categories'), where("deletedAt", "==", null));
         const categorySnapshot = await getDocs(categoriesCollection);
         const categoriesList = categorySnapshot.docs.map(doc => ({ id: doc.id, name: doc.data().name }));
         setCategories(categoriesList);
@@ -75,7 +76,7 @@ const DiscountScreen = () => {
       if (selectedCategories.length > 0) {
         let allFoods: Item[] = [];
         for (const categoryId of selectedCategories) {
-          const foodsCollectionRef = collection(db, 'categories', categoryId, 'foods');
+          const foodsCollectionRef = query(collection(db, 'categories', categoryId, 'foods'), where("deletedAt", "==", null));
           const foodSnapshot = await getDocs(foodsCollectionRef);
           const foodsList = foodSnapshot.docs.map(doc => ({ id: doc.id, name: doc.data().name }));
           allFoods = [...allFoods, ...foodsList];
@@ -159,6 +160,7 @@ const DiscountScreen = () => {
         expirationDate: discountExpiration,
         categories: selectedCategories,
         foods: selectedFoods,
+        deletedAt: null,
     };
 
     if (calculationType === 'percentage') {
@@ -209,7 +211,8 @@ const DiscountScreen = () => {
           text: "OK",
           onPress: async () => {
             try {
-              await deleteDoc(doc(db, "discounts", discountId));
+              const discountDoc = doc(db, "discounts", discountId);
+              await updateDoc(discountDoc, { deletedAt: serverTimestamp() });
               Alert.alert("Success", "Discount deleted successfully!");
               setDetailsModalVisible(false);
               fetchDiscounts();

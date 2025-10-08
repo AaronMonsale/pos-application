@@ -1,5 +1,5 @@
 import { MaterialIcons } from '@expo/vector-icons';
-import { addDoc, collection, deleteDoc, doc, getDocs, updateDoc } from "firebase/firestore";
+import { addDoc, collection, deleteDoc, doc, getDocs, updateDoc, query, where, serverTimestamp } from "firebase/firestore";
 import React, { useEffect, useState } from 'react';
 import { Alert, FlatList, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { Colors } from '../../constants/theme';
@@ -10,12 +10,14 @@ interface Food {
   name: string;
   price: number;
   description: string;
+  deletedAt?: Date | null;
 }
 
 interface Category {
   id: string;
   name: string;
   foods: Food[];
+  deletedAt?: Date | null;
 }
 
 const MenuManagement = () => {
@@ -34,7 +36,7 @@ const MenuManagement = () => {
   }, []);
 
   const fetchCategories = async () => {
-    const categoriesCollection = collection(db, 'categories');
+    const categoriesCollection = query(collection(db, 'categories'), where("deletedAt", "==", null));
     const categoriesSnapshot = await getDocs(categoriesCollection);
     const categoriesList = categoriesSnapshot.docs.map(doc => ({
       id: doc.id,
@@ -50,7 +52,7 @@ const MenuManagement = () => {
       return;
     }
     try {
-      await addDoc(collection(db, 'categories'), { name: newCategoryName });
+      await addDoc(collection(db, 'categories'), { name: newCategoryName, deletedAt: null });
       setNewCategoryName('');
       fetchCategories();
       navigateToList();
@@ -76,6 +78,7 @@ const MenuManagement = () => {
             name: newFoodName,
             price: parseFloat(newFoodPrice),
             description: newFoodDescription,
+            deletedAt: null,
           });
 
       setNewFoodName('');
@@ -83,7 +86,8 @@ const MenuManagement = () => {
       setNewFoodDescription('');
 
       // Re-fetch foods for the current category to show the new item.
-      const foodsSnapshot = await getDocs(foodsCollectionRef);
+      const foodsQuery = query(collection(db, 'categories', selectedCategory.id, 'foods'), where("deletedAt", "==", null));
+      const foodsSnapshot = await getDocs(foodsQuery);
       const foodsList = foodsSnapshot.docs.map(foodDoc => {
           const data = foodDoc.data();
           return {
@@ -105,7 +109,7 @@ const MenuManagement = () => {
 
   const handleSelectCategory = async (category: Category) => {
     const categoryRef = doc(db, 'categories', category.id);
-    const foodsCollectionRef = collection(categoryRef, 'foods');
+    const foodsCollectionRef = query(collection(categoryRef, 'foods'), where("deletedAt", "==", null));
     const foodsSnapshot = await getDocs(foodsCollectionRef);
     const foodsList = foodsSnapshot.docs.map(foodDoc => {
         const data = foodDoc.data();
@@ -178,7 +182,8 @@ const MenuManagement = () => {
           style: 'destructive', 
           onPress: async () => {
             try {
-              await deleteDoc(doc(db, 'categories', categoryId));
+              const categoryRef = doc(db, 'categories', categoryId);
+              await updateDoc(categoryRef, { deletedAt: serverTimestamp() });
               fetchCategories();
               navigateToList();
               Alert.alert('Success', 'Category deleted successfully');
@@ -204,7 +209,8 @@ const MenuManagement = () => {
           style: 'destructive',
           onPress: async () => {
             try {
-              await deleteDoc(doc(db, 'categories', selectedCategory.id, 'foods', foodId));
+                const foodRef = doc(db, 'categories', selectedCategory.id, 'foods', foodId);
+                await updateDoc(foodRef, { deletedAt: serverTimestamp() });
               // Re-fetch foods to show the updated list.
               handleSelectCategory(selectedCategory);
               Alert.alert('Success', 'Food deleted successfully');

@@ -1,6 +1,6 @@
 
 import { Ionicons } from '@expo/vector-icons';
-import { addDoc, collection, deleteDoc, doc, getDocs, updateDoc } from 'firebase/firestore';
+import { addDoc, collection, deleteDoc, doc, getDocs, updateDoc, query, where, serverTimestamp } from 'firebase/firestore';
 import React, { useEffect, useState } from 'react';
 import { Alert, FlatList, Modal, StyleSheet, Text, TextInput, TouchableOpacity, TouchableWithoutFeedback, View } from 'react-native';
 import { Colors } from '../../constants/theme';
@@ -10,6 +10,7 @@ interface Staff {
     id: string;
     name: string;
     pin: string;
+    deletedAt?: Date | null;
 }
 
 const StaffManagementScreen = () => {
@@ -25,7 +26,7 @@ const StaffManagementScreen = () => {
 
     const fetchStaff = async () => {
         try {
-            const staffCollection = collection(db, 'staff');
+            const staffCollection = query(collection(db, 'staff'), where("deletedAt", "==", null));
             const staffSnapshot = await getDocs(staffCollection);
             const list = staffSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Staff)).sort((a, b) => a.name.localeCompare(b.name));
             setStaffList(list);
@@ -50,7 +51,7 @@ const StaffManagementScreen = () => {
                 const staffDoc = doc(db, 'staff', editingStaff.id);
                 await updateDoc(staffDoc, { name: staffName, pin: staffPin });
             } else {
-                await addDoc(collection(db, 'staff'), { name: staffName, pin: staffPin });
+                await addDoc(collection(db, 'staff'), { name: staffName, pin: staffPin, deletedAt: null });
             }
             closeModal();
             fetchStaff();
@@ -70,7 +71,7 @@ const StaffManagementScreen = () => {
     const handleDelete = (staff: Staff) => {
         Alert.alert(
             'Delete Staff',
-            `Are you sure you want to delete ${staff.name}? This action cannot be undone.`,
+            `Are you sure you want to delete ${staff.name}?`,
             [
                 { text: 'Cancel', style: 'cancel' },
                 {
@@ -78,7 +79,8 @@ const StaffManagementScreen = () => {
                     style: 'destructive',
                     onPress: async () => {
                         try {
-                            await deleteDoc(doc(db, 'staff', staff.id));
+                            const staffDoc = doc(db, 'staff', staff.id);
+                            await updateDoc(staffDoc, { deletedAt: serverTimestamp() });
                             fetchStaff();
                         } catch (error) {
                             console.error("Error deleting staff: ", error);
@@ -88,7 +90,7 @@ const StaffManagementScreen = () => {
                 },
             ]
         );
-    };
+    }; 
     
     const openModal = () => {
         setEditingStaff(null);

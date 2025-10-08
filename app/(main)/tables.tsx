@@ -1,6 +1,6 @@
 import { Ionicons } from '@expo/vector-icons';
 import { useFocusEffect, useLocalSearchParams, useNavigation, useRouter } from 'expo-router';
-import { addDoc, collection, deleteDoc, doc, getDoc, getDocs, updateDoc, writeBatch } from 'firebase/firestore';
+import { addDoc, collection, deleteDoc, doc, getDoc, getDocs, updateDoc, writeBatch, query, where, serverTimestamp } from 'firebase/firestore';
 import React, { useCallback, useLayoutEffect, useState } from 'react';
 import { ActivityIndicator, Alert, FlatList, Modal, StyleSheet, Text, TextInput, TouchableOpacity, TouchableWithoutFeedback, View } from 'react-native';
 import { Colors } from '../../constants/theme';
@@ -11,6 +11,7 @@ interface Table {
     name: string;
     occupied?: boolean;
     occupiedBy?: string;
+    deletedAt?: Date | null;
 }
 
 interface OrderItem {
@@ -56,7 +57,7 @@ const TablesScreen = () => {
 
 
     const fetchTables = useCallback(async () => {
-        const tablesCollection = collection(db, 'tables');
+        const tablesCollection = query(collection(db, 'tables'), where("deletedAt", "==", null));
         const tablesSnapshot = await getDocs(tablesCollection);
         const tablesList = tablesSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Table)).sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }));
         setTables(tablesList);
@@ -123,7 +124,7 @@ const TablesScreen = () => {
 
         if (addMode === 'single') {
             if (tableName.trim() === '') return Alert.alert('Error', 'Table name cannot be empty.');
-            await addDoc(collection(db, 'tables'), { name: tableName, occupied: false, occupiedBy: null });
+            await addDoc(collection(db, 'tables'), { name: tableName, occupied: false, occupiedBy: null, deletedAt: null });
         } else {
             const count = parseInt(numberOfTables, 10);
             if (isNaN(count) || count <= 0) {
@@ -145,7 +146,7 @@ const TablesScreen = () => {
             for (let i = 1; i <= count; i++) {
                 const newTableName = `Table ${maxTableNumber + i}`;
                 const newTableRef = doc(collection(db, 'tables'));
-                batch.set(newTableRef, { name: newTableName, occupied: false, occupiedBy: null });
+                batch.set(newTableRef, { name: newTableName, occupied: false, occupiedBy: null, deletedAt: null });
             }
             await batch.commit();
         }
@@ -162,7 +163,7 @@ const TablesScreen = () => {
         setModalVisible(true);
     };
 
-    const handleDelete = (tableId: string) => {
+    const handleDelete = (table: Table) => {
         if (!isAdmin) return;
         Alert.alert('Delete Table', 'Are you sure you want to delete this table?', [
             { text: 'Cancel', style: 'cancel' },
@@ -170,7 +171,8 @@ const TablesScreen = () => {
                 text: 'Delete',
                 style: 'destructive',
                 onPress: async () => {
-                    await deleteDoc(doc(db, 'tables', tableId));
+                    const tableDoc = doc(db, 'tables', table.id);
+                    await updateDoc(tableDoc, { deletedAt: serverTimestamp() });
                     fetchTables();
                 },
             },
@@ -253,7 +255,7 @@ const TablesScreen = () => {
         Alert.alert(`Manage Table: ${table.name}`, 'Choose an option', [
             { text: 'Cancel', style: 'cancel' },
             { text: 'Edit', onPress: () => handleEdit(table) },
-            { text: 'Delete', style: 'destructive', onPress: () => handleDelete(table.id) },
+            { text: 'Delete', style: 'destructive', onPress: () => handleDelete(table) },
         ]);
     }
 
