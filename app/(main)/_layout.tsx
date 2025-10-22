@@ -1,7 +1,23 @@
-import { Stack } from 'expo-router';
+import { Ionicons } from '@expo/vector-icons';
+import { Stack, useRouter } from 'expo-router';
+import { signOut } from 'firebase/auth';
 import React from 'react';
+import { Alert, TouchableOpacity } from 'react-native';
+import { auth } from '../../firebase';
 
 const MainLayout = () => {
+    const router = useRouter();
+
+    const handleLogout = async () => {
+        try {
+            await signOut(auth);
+            router.replace('/(auth)/login'); // Redirect to login after logout
+        } catch (error) {
+            console.error("Logout Error:", error);
+            Alert.alert("Logout Failed", "An error occurred while logging out.");
+        }
+    };
+
     return (
         <Stack>
             <Stack.Screen name="dashboard" options={{ headerShown: false }} />
@@ -17,7 +33,11 @@ const MainLayout = () => {
             <Stack.Screen name="discount" options={{ title: "Discount" }} />
             <Stack.Screen name="user-role" options={{ title: "User Roles" }} />
             <Stack.Screen name="admin" options={{ headerShown: false }} />
-            <Stack.Screen name='kitchen' options={{ title: "Kitchen" }} />
+            <Stack.Screen 
+                name='kitchen' 
+                options={{ headerShown: false }}
+            />
+            <Stack.Screen name='pending-order' options={{ headerShown: false }} />
         </Stack>
     );
 };

@@ -12,6 +12,7 @@ export const Colors = {
     icon: '#687076',
     tabIconDefault: '#687076',
     tabIconSelected: tintColorLight,
+    danger: '#FF3B30', // Standard red for destructive actions
   },
   dark: {
     text: '#ECEDEE',
@@ -20,5 +21,6 @@ export const Colors = {
     icon: '#9BA1A6',
     tabIconDefault: '#9BA1A6',
     tabIconSelected: tintColorDark,
+    danger: '#FF453A', // A slightly brighter red for dark mode
   },
 };

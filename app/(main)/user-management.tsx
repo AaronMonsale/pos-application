@@ -18,6 +18,10 @@ const UserManagementScreen = () => {
                 <Ionicons name="people-outline" size={40} color={Colors.light.tint} />
                 <Text style={styles.tileText}>Employees</Text>
             </TouchableOpacity>
+            <TouchableOpacity style={styles.tile} onPress={() => router.push('/(main)/kitchenacc')}>
+                <Ionicons name="flame-outline" size={40} color={Colors.light.tint} />
+                <Text style={styles.tileText}>Kitchen</Text>
+            </TouchableOpacity>
         </View>
     );
 };
@@ -26,6 +30,7 @@ const styles = StyleSheet.create({
     container: {
         flex: 1,
         flexDirection: 'row',
+        flexWrap: 'wrap', // Allow items to wrap to the next line
         justifyContent: 'center',
         alignItems: 'flex-start',
         paddingTop: 20,
@@ -34,9 +39,9 @@ const styles = StyleSheet.create({
         paddingHorizontal: 20,
     },
     tile: {
-        flex: 1,
+        // Adjust width to fit 2 in a row, considering gap
+        width: '45%',
         aspectRatio: 1,
-        maxWidth: '45%',
         backgroundColor: 'white',
         borderRadius: 15,
         padding: 20,
@@ -50,6 +55,7 @@ const styles = StyleSheet.create({
         shadowOpacity: 0.25,
         shadowRadius: 3.84,
         elevation: 5,
+        marginBottom: 20, // Add margin bottom for spacing when wrapped
     },
     tileText: {
         marginTop: 10,

@@ -1,6 +1,6 @@
 import { Ionicons } from '@expo/vector-icons';
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import { addDoc, collection, doc, getDocs, onSnapshot, serverTimestamp, Timestamp, updateDoc } from "firebase/firestore";
+import { addDoc, collection, doc, getDoc, getDocs, onSnapshot, serverTimestamp, Timestamp, updateDoc } from "firebase/firestore";
 import React, { useEffect, useState } from 'react';
 import { Alert, FlatList, Modal, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, TouchableWithoutFeedback, useWindowDimensions, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -163,26 +163,71 @@ const PosScreen = () => {
   }, [orderItems, appliedDiscount]);
 
   const handleSaveOrder = async () => {
-    if (!currentStaff) return Alert.alert("Login Required", "Please log in before saving an order.");
+    if (!currentStaff) {
+      Alert.alert("Login Required", "Please log in before saving an order.");
+      return;
+    }
+    
     if (orderItems.length === 0) {
-        try {
-            const tableDoc = doc(db, 'tables', tableId);
-            await updateDoc(tableDoc, { occupied: false, occupiedBy: null, staffId: null, order: [], });
-            Alert.alert("Table Cleared", `${tableName} is now available.`, [
-                { text: "OK", onPress: handleBack }
-            ]);
-        } catch (error) { console.error("Error clearing order: ", error); Alert.alert("Error", "Could not clear the order from the table."); }
-        return;
+      try {
+        const tableDoc = doc(db, 'tables', tableId);
+        await updateDoc(tableDoc, { 
+            occupied: false, 
+            occupiedBy: null, 
+            staffId: null, 
+            order: [],
+            status: 'available' // Reset status when cleared
+        });
+        Alert.alert("Table Cleared", `${tableName} is now available.`, [
+          { text: "OK", onPress: () => router.replace('/(main)/tables') }
+        ]);
+      } catch (error) {
+        console.error("Error clearing order: ", error);
+        Alert.alert("Error", "Could not clear the order from the table.");
+      }
+      return;
     }
 
     try {
-        const tableDoc = doc(db, 'tables', tableId);
-        const orderToSave = orderItems.map(item => ({ food: item.food, quantity: item.quantity, discount: item.discount || null, note: item.note || '', }));
-        await updateDoc(tableDoc, { occupied: true, occupiedBy: currentStaff.name, staffId: currentStaff.id, order: orderToSave, });
-        Alert.alert("Order Saved", `The order has been saved to ${tableName}.`, [
-            { text: "OK", onPress: handleBack }
-        ]);
-    } catch (error) { console.error("Error saving order: ", error); Alert.alert("Error", "Could not save the order to the table."); }
+      const tableDocRef = doc(db, 'tables', tableId);
+      
+      // Get the current table data to check the status
+      const tableDocSnap = await getDoc(tableDocRef);
+      const currentStatus = tableDocSnap.exists() ? tableDocSnap.data().status : null;
+
+      const orderToSave = orderItems.map(item => ({
+        food: item.food,
+        quantity: item.quantity,
+        discount: item.discount || null,
+        note: item.note || '',
+      }));
+      
+      const updateData: any = {
+        occupied: true,
+        occupiedBy: currentStaff.name,
+        staffId: currentStaff.id,
+        order: orderToSave,
+        status: 'serving', // This status will make the order appear in the kitchen
+      };
+
+      // Only set a new timestamp if it's a new order for the kitchen
+      // This prevents the order from losing its place in the queue on every update
+      if (currentStatus !== 'serving') {
+        updateData.orderPlacedAt = serverTimestamp();
+      }
+      
+      await updateDoc(tableDocRef, updateData);
+
+      // Navigate to the pending order screen
+      router.replace({
+        pathname: '/(main)/pending-order',
+        params: { tableId, tableName },
+      });
+
+    } catch (error) {
+      console.error("Error saving order: ", error);
+      Alert.alert("Error", "Could not save the order to the table.");
+    }
   };
 
   const handlePay = async () => {

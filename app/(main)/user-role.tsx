@@ -67,6 +67,15 @@ const UserRole = () => {
             >
               <Text style={role === 'POS' ? styles.selectedRoleText : styles.roleText}>POS</Text>
             </TouchableOpacity>
+            <TouchableOpacity
+              onPress={() => setRole("Kitchen")}
+              style={[
+                styles.roleButton,
+                role === "Kitchen" && styles.selectedRole,
+              ]}
+            >
+              <Text style={role === 'Kitchen' ? styles.selectedRoleText : styles.roleText}>Kitchen</Text>
+            </TouchableOpacity>
           </View>
         </View>
         <Button title="Create User" onPress={handleCreateUser} />
@@ -107,6 +116,7 @@ const styles = StyleSheet.create({
     borderRadius: 8,
     alignItems: 'center',
     justifyContent: 'center',
+    marginRight: 10, // Added margin to separate buttons
   },
   selectedRole: {
     backgroundColor: Colors.light.tint,

@@ -1,16 +1,13 @@
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from "expo-router";
 import React from "react";
-import { Image, ScrollView, StyleSheet, Text, TouchableOpacity, View, useWindowDimensions } from "react-native";
+import { Image, ScrollView, StyleSheet, Text, TouchableOpacity, View } from "react-native";
 import { Colors } from "../../constants/theme";
 
-// Updated the modules to include the new functions
+// Modules for the dashboard tiles (Kitchen module removed)
 const modules = [
-  // Replaced "User & Role" with "Manage Staff"
   { name: "Manage Staff", icon: "people-outline" as const, route: "/(main)/staff" },
-  // Added "User Management"
   { name: "User Management", icon: "person-circle-outline" as const, route: "/(main)/user-management" },
-  // Added "Manage Tables"
   { name: "Manage Tables", icon: "grid-outline" as const, route: { pathname: '/(main)/tables', params: { admin: 'true' } } },
   { name: "Menu", icon: "restaurant-outline" as const, route: "/(main)/menu" },
   { name: "Transactions", icon: "cash-outline" as const, route: "/(main)/transactions" },
@@ -21,13 +18,12 @@ const modules = [
 
 const AdminDashboard = () => {
   const router = useRouter();
-  const { width, height } = useWindowDimensions();
-  const isLandscape = width > height;
-
-  const Container = isLandscape ? ScrollView : View;
 
   return (
-    <Container style={isLandscape ? styles.scrollContainer : styles.container} contentContainerStyle={isLandscape ? {alignItems: 'center'} : {}}>
+    <ScrollView
+      style={styles.container}
+      contentContainerStyle={styles.contentContainer}
+    >
       <Image source={require('../../assets/images/onecore_consultancy_inc_logo.jpg')} style={styles.logo} />
       <Text style={styles.headerText}>ADMIN DASHBOARD</Text>
       <View style={styles.tilesContainer}>
@@ -38,34 +34,34 @@ const AdminDashboard = () => {
           </TouchableOpacity>
         ))}
       </View>
-    </Container>
+    </ScrollView>
   );
 };
 
 const styles = StyleSheet.create({
+  // Style for the ScrollView component itself
   container: {
     flex: 1,
-    padding: 16,
     backgroundColor: Colors.light.background,
-    alignItems: 'center',
-    justifyContent: 'center',
   },
-  scrollContainer: {
+  // Style for the content within the ScrollView
+  contentContainer: {
     padding: 16,
-    backgroundColor: Colors.light.background,
+    alignItems: 'center', // Center content horizontally
+    paddingBottom: 40, // Ensure there's space at the bottom
   },
   logo: {
     width: 250,
     height: 120,
     marginTop: 20,
-    resizeMode: 'contain', 
+    resizeMode: 'contain',
   },
   headerText: {
     color: Colors.light.tint,
     textAlign: "center",
     fontSize: 28,
     fontWeight: "bold",
-    marginBottom: 10, 
+    marginBottom: 10,
   },
   tilesContainer: {
     flexDirection: 'row',
@@ -74,9 +70,9 @@ const styles = StyleSheet.create({
     width: '100%',
   },
   tile: {
-    width: '45%', // Keep 2 columns as per the image
+    width: '45%',
     aspectRatio: 1,
-    backgroundColor: 'white', // Changed to white
+    backgroundColor: 'white',
     borderRadius: 15,
     padding: 10,
     marginVertical: 10,
@@ -87,9 +83,9 @@ const styles = StyleSheet.create({
       width: 0,
       height: 2,
     },
-    shadowOpacity: 0.1, // Softer shadow
+    shadowOpacity: 0.1,
     shadowRadius: 3.84,
-    elevation: 3, // Lower elevation for a flatter look
+    elevation: 3,
   },
   tileText: {
     marginTop: 10,

@@ -45,8 +45,11 @@ const Login = () => {
 
       if (docSnap.exists()) {
         const userData = docSnap.data();
+        // Role-based redirection
         if (userData.role === "admin") {
           router.replace("/(main)/admin");
+        } else if (userData.role === "Kitchen") {
+          router.replace("/(main)/kitchen");
         } else {
           router.replace("/(main)/tables");
         }
