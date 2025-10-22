@@ -1,7 +1,7 @@
 import { Ionicons } from '@expo/vector-icons';
 import { useFocusEffect, useLocalSearchParams, useNavigation, useRouter } from 'expo-router';
-import { addDoc, collection, deleteDoc, doc, getDoc, getDocs, updateDoc, writeBatch, query, where, serverTimestamp } from 'firebase/firestore';
-import React, { useCallback, useLayoutEffect, useState } from 'react';
+import { addDoc, collection, doc, onSnapshot, updateDoc, writeBatch, query, where, serverTimestamp } from 'firebase/firestore';
+import React, { useCallback, useLayoutEffect, useState, useEffect } from 'react';
 import { ActivityIndicator, Alert, FlatList, Modal, StyleSheet, Text, TextInput, TouchableOpacity, TouchableWithoutFeedback, View } from 'react-native';
 import { Colors } from '../../constants/theme';
 import { auth, db } from '../../firebase';
@@ -36,6 +36,7 @@ const TablesScreen = () => {
     const params = useLocalSearchParams();
     const isAdmin = params.admin === 'true';
     const { staff: staffJson } = params as { staff?: string };
+    const [staffName, setStaffName] = useState<string | null>(null);
 
     const [modalVisible, setModalVisible] = useState(false);
     const [tables, setTables] = useState<Table[]>([]);
@@ -55,12 +56,20 @@ const TablesScreen = () => {
     const [orderDiscount, setOrderDiscount] = useState(0);
     const [orderTotal, setOrderTotal] = useState(0);
 
+    useEffect(() => {
+        if (staffJson) {
+            const staff = JSON.parse(staffJson);
+            setStaffName(staff.name);
+        }
+    }, [staffJson]);
 
-    const fetchTables = useCallback(async () => {
+    useEffect(() => {
         const tablesCollection = query(collection(db, 'tables'), where("deletedAt", "==", null));
-        const tablesSnapshot = await getDocs(tablesCollection);
-        const tablesList = tablesSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Table)).sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }));
-        setTables(tablesList);
+        const unsubscribe = onSnapshot(tablesCollection, (snapshot) => {
+            const tablesList = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Table)).sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }));
+            setTables(tablesList);
+        });
+        return () => unsubscribe();
     },[]);
 
     const handleLogout = useCallback(() => {
@@ -87,7 +96,6 @@ const TablesScreen = () => {
                 elevation: 0,
             });
         } else {
-            
             navigation.setOptions({
                 headerTitle: 'Tables',
                 headerLeft: () => null,
@@ -103,12 +111,63 @@ const TablesScreen = () => {
         }
     }, [navigation, router, isAdmin, handleLogout]);
 
+    useEffect(() => {
+        if (!selectedTableForView || !viewOrderModalVisible) {
+            return;
+        }
 
-    useFocusEffect(
-        useCallback(() => {
-            fetchTables();
-        }, [fetchTables])
-    );
+        setLoadingOrder(true);
+        const tableDocRef = doc(db, 'tables', selectedTableForView.id);
+
+        const unsubscribe = onSnapshot(tableDocRef, (docSnap) => {
+            if (docSnap.exists()) {
+                const tableData = docSnap.data();
+                const updatedTable = { id: docSnap.id, ...tableData } as Table;
+                setSelectedTableForView(updatedTable);
+
+                const orderData: { food: any; quantity: number; discount: number; }[] = tableData.order || [];
+                const fetchedItems: FetchedOrderItem[] = orderData.map((item) => ({
+                    ...item.food,
+                    quantity: item.quantity,
+                    discount: item.discount || 0,
+                }));
+                
+                const itemsForState: OrderItem[] = fetchedItems.map((item, index) => ({...item, id: `${item.id || 'food'}-${index}`}));
+                setCurrentOrderItems(itemsForState);
+
+                if (itemsForState.length > 0) {
+                    const subtotal = fetchedItems.reduce((acc: number, item: FetchedOrderItem) => acc + (item.price * item.quantity), 0);
+                    const totalItemDiscount = fetchedItems.reduce((acc: number, item: FetchedOrderItem) => acc + (item.price * item.quantity * ((item.discount || 0) / 100)), 0);
+                    const totalDiscount = totalItemDiscount;
+                    const subtotalAfterDiscounts = subtotal - totalDiscount;
+                    const tax = subtotalAfterDiscounts * 0.10;
+                    const serviceCharge = subtotalAfterDiscounts * 0.10;
+                    const total = subtotalAfterDiscounts + tax + serviceCharge;
+
+                    setOrderSubtotal(subtotal);
+                    setOrderDiscount(totalDiscount);
+                    setOrderTax(tax);
+                    setOrderServiceCharge(serviceCharge);
+                    setOrderTotal(total);
+                } else {
+                    setOrderSubtotal(0);
+                    setOrderDiscount(0);
+                    setOrderTax(0);
+                    setOrderServiceCharge(0);
+                    setOrderTotal(0);
+                }
+            } else {
+                 setViewOrderModalVisible(false);
+            }
+            setLoadingOrder(false);
+        }, (error) => {
+            console.error("Error fetching order for table: ", error);
+            Alert.alert("Error", "Could not fetch order details for this table.");
+            setLoadingOrder(false);
+        });
+
+        return () => unsubscribe();
+    }, [selectedTableForView?.id, viewOrderModalVisible]);
 
     const handleAddOrUpdateTable = async () => {
         if (!isAdmin) return;
@@ -118,7 +177,6 @@ const TablesScreen = () => {
             const tableDoc = doc(db, 'tables', editingTable.id);
             await updateDoc(tableDoc, { name: tableName });
             closeModal();
-            fetchTables();
             return;
         }
 
@@ -131,20 +189,9 @@ const TablesScreen = () => {
                 return Alert.alert('Error', 'Please enter a valid number of tables to add.');
             }
 
-            const querySnapshot = await getDocs(collection(db, 'tables'));
-            let maxTableNumber = 0;
-            querySnapshot.forEach(doc => {
-                const name = doc.data().name;
-                const match = name.match(/^Table (\d+)$/);
-                if (match) {
-                    const num = parseInt(match[1], 10);
-                    if (num > maxTableNumber) maxTableNumber = num;
-                }
-            });
-
             const batch = writeBatch(db);
             for (let i = 1; i <= count; i++) {
-                const newTableName = `Table ${maxTableNumber + i}`;
+                const newTableName = `Table ${i}`;
                 const newTableRef = doc(collection(db, 'tables'));
                 batch.set(newTableRef, { name: newTableName, occupied: false, occupiedBy: null, deletedAt: null });
             }
@@ -152,7 +199,6 @@ const TablesScreen = () => {
         }
 
         closeModal();
-        fetchTables();
     };
 
     const handleEdit = (table: Table) => {
@@ -173,7 +219,6 @@ const TablesScreen = () => {
                 onPress: async () => {
                     const tableDoc = doc(db, 'tables', table.id);
                     await updateDoc(tableDoc, { deletedAt: serverTimestamp() });
-                    fetchTables();
                 },
             },
         ]);
@@ -193,61 +238,12 @@ const TablesScreen = () => {
             });
         }
     };
+    
 
-    const viewOrder = async (table: Table) => {
+    const viewOrder = (table: Table) => {
         if (!table.id) return;
-        setLoadingOrder(true);
         setSelectedTableForView(table);
         setViewOrderModalVisible(true);
-        setCurrentOrderItems([]);
-        setOrderSubtotal(0);
-        setOrderTax(0);
-        setOrderServiceCharge(0);
-        setOrderDiscount(0);
-        setOrderTotal(0);
-
-        try {
-            const tableDocRef = doc(db, 'tables', table.id);
-            const tableDocSnap = await getDoc(tableDocRef);
-
-            if (tableDocSnap.exists()) {
-                const tableData = tableDocSnap.data();
-                const orderData: { food: any; quantity: number; discount: number; }[] = tableData.order || [];
-
-                const fetchedItems: FetchedOrderItem[] = orderData.map((item) => ({
-                    ...item.food,
-                    quantity: item.quantity,
-                    discount: item.discount || 0,
-                }));
-                
-                const itemsForState: OrderItem[] = fetchedItems.map((item, index) => ({...item, id: `${item.id || 'food'}-${index}`}));
-                setCurrentOrderItems(itemsForState);
-
-                if (itemsForState.length > 0) {
-                    const subtotal = fetchedItems.reduce((acc: number, item: FetchedOrderItem) => acc + (item.price * item.quantity), 0);
-                    const totalItemDiscount = fetchedItems.reduce((acc: number, item: FetchedOrderItem) => acc + (item.price * item.quantity * ((item.discount || 0) / 100)), 0);
-
-                    const totalDiscount = totalItemDiscount;
-                    const subtotalAfterDiscounts = subtotal - totalDiscount;
-                    const tax = subtotalAfterDiscounts * 0.10;
-                    const serviceCharge = subtotalAfterDiscounts * 0.10;
-                    const total = subtotalAfterDiscounts + tax + serviceCharge;
-
-                    setOrderSubtotal(subtotal);
-                    setOrderDiscount(totalDiscount);
-                    setOrderTax(tax);
-                    setOrderServiceCharge(serviceCharge);
-                    setOrderTotal(total);
-                }
-            } else {
-                console.log(`No such table found: ${table.id}`);
-            }
-        } catch (error) {
-            console.error("Error fetching order for table: ", error);
-            Alert.alert("Error", "Could not fetch order details for this table.");
-        } finally {
-            setLoadingOrder(false);
-        }
     };
 
     const handleLongPress = (table: Table) => {
@@ -420,8 +416,6 @@ const TablesScreen = () => {
                 keyExtractor={item => item.id}
                 numColumns={3}
                 contentContainerStyle={styles.tilesContainer}
-                onRefresh={fetchTables}
-                refreshing={false}
             />
             {isAdmin ? renderAdminModal() : null}
             {renderViewOrderModal()}

@@ -1,7 +1,7 @@
 import { Ionicons } from '@expo/vector-icons';
-import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
-import { addDoc, collection, doc, getDoc, getDocs, serverTimestamp, Timestamp, updateDoc } from "firebase/firestore";
-import React, { useCallback, useEffect, useState } from 'react';
+import { useLocalSearchParams, useRouter } from 'expo-router';
+import { addDoc, collection, doc, getDocs, onSnapshot, serverTimestamp, Timestamp, updateDoc } from "firebase/firestore";
+import React, { useEffect, useState } from 'react';
 import { Alert, FlatList, Modal, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, TouchableWithoutFeedback, useWindowDimensions, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Colors } from '../../constants/theme';
@@ -74,53 +74,75 @@ const PosScreen = () => {
     router.back();
   }
 
-  useFocusEffect(
-    useCallback(() => {
-        const fetchData = async () => {
-            try {
-                const categoriesSnapshot = await getDocs(collection(db, 'categories'));
-                const categoriesList = categoriesSnapshot.docs.map(doc => ({ id: doc.id, name: doc.data().name, foods: [] })) as Category[];
-                setCategories(categoriesList);
+  // --- Data Fetching and Real-time Listeners ---
 
-                const discountsSnapshot = await getDocs(collection(db, 'discounts'));
-                const discountsList = discountsSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })) as Discount[];
-                setDiscounts(discountsList.filter(d => new Date() >= d.startDate.toDate() && new Date() <= d.expirationDate.toDate()));
+  // Effect for fetching static data like categories and staff list once
+  useEffect(() => {
+    const fetchStaticData = async () => {
+        try {
+            const categoriesSnapshot = await getDocs(collection(db, 'categories'));
+            const categoriesList = categoriesSnapshot.docs.map(doc => ({ id: doc.id, name: doc.data().name, foods: [] })) as Category[];
+            setCategories(categoriesList);
 
-                const staffSnapshot = await getDocs(collection(db, 'staff'));
-                const allStaff = staffSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Staff));
-                setStaffList(allStaff);
+            const discountsSnapshot = await getDocs(collection(db, 'discounts'));
+            const allDiscounts = discountsSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })) as Discount[];
+            const activeDiscounts = allDiscounts.filter(d => new Date() >= d.startDate.toDate() && new Date() <= d.expirationDate.toDate());
+            setDiscounts(activeDiscounts);
 
-                if (staffJson && !currentStaff) {
-                    try {
-                        setCurrentStaff(JSON.parse(staffJson));
-                    } catch (e) {
-                        console.error("Failed to parse staff JSON", e);
-                    }
-                }
+            const staffSnapshot = await getDocs(collection(db, 'staff'));
+            const allStaff = staffSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Staff));
+            setStaffList(allStaff);
 
-                if (tableId) {
-                    const tableDocSnap = await getDoc(doc(db, 'tables', tableId));
-                    if (tableDocSnap.exists()) {
-                        const tableData = tableDocSnap.data();
-                        setIsTableOccupied(tableData.occupied || false);
-                        setOccupiedBy(tableData.occupiedBy || null);
-                        
-                        const initialOrder = (tableData.order || []).map((item: any, index: number) => ({
-                            ...item,
-                            id: `${item.food.id}-${Date.now()}-${index}`
-                        }));
-                        setOrderItems(initialOrder);
-                    }
-                }
-            } catch (error) {
-                console.error("Failed to fetch data:", error);
-                Alert.alert("Error", "Failed to load page data.");
-            }
-        };
-        fetchData();
-    }, [tableId])
-  );
+        } catch (error) {
+            console.error("Failed to fetch static data:", error);
+            Alert.alert("Error", "Failed to load essential page data.");
+        }
+    };
+    fetchStaticData();
+  }, []);
+
+  // Effect for setting up the real-time listener for the table's order data
+  useEffect(() => {
+    if (!tableId) return; // Don't run if there's no tableId
+
+    const tableDocRef = doc(db, 'tables', tableId);
     
+    // onSnapshot creates the listener and returns an unsubscribe function
+    const unsubscribe = onSnapshot(tableDocRef, (docSnap) => {
+        if (docSnap.exists()) {
+            const tableData = docSnap.data();
+            
+            // Update the table status in real-time
+            setIsTableOccupied(tableData.occupied || false);
+            setOccupiedBy(tableData.occupiedBy || null);
+            
+            // Update the order items from the database
+            const orderFromDb = (tableData.order || []).map((item: any, index: number) => ({
+                ...item,
+                id: `${item.food.id}-${Date.now()}-${index}` // Create a unique ID for the FlatList
+            }));
+
+            // Only update state if the order has actually changed
+            if (JSON.stringify(orderFromDb) !== JSON.stringify(orderItems)) {
+                setOrderItems(orderFromDb);
+            }
+        } else {
+            console.error("Table document not found!");
+            Alert.alert("Error", "Could not find the specified table.", [
+                { text: "OK", onPress: () => router.back() }
+            ]);
+        }
+    }, (error) => {
+        console.error("Failed to listen to table changes:", error);
+        Alert.alert("Error", "Lost connection to the table data.");
+    });
+
+    // Cleanup function: This will be called when the component unmounts
+    // or when the tableId changes, preventing memory leaks.
+    return () => unsubscribe();
+    
+  }, [tableId]); // Dependency array: ensures this effect re-runs if the user navigates to a different table
+
   useEffect(() => {
     const newSubtotal = orderItems.reduce((acc, item) => acc + (item.food.price * item.quantity), 0);
     const totalItemDiscount = orderItems.reduce((acc, item) => acc + (item.discount ? (item.food.price * item.quantity) * (item.discount / 100) : 0), 0);
@@ -488,8 +510,15 @@ const PosScreen = () => {
                   </Text>
               </View>
               <View>
-                  <TouchableOpacity style={styles.helloButton} onPress={() => setIsDropdownVisible(!isDropdownVisible)}>
-                      <Text style={styles.helloText}>{currentStaff ? currentStaff.name : 'Select Staff'}</Text>
+                  <TouchableOpacity
+                      style={styles.helloButton}
+                      onPress={() => setIsDropdownVisible(!isDropdownVisible)}
+                      // Corrected Logic: Disable only if a different staff is logged in.
+                      disabled={!!(currentStaff && isTableOccupied && occupiedBy && currentStaff.name !== occupiedBy)}
+                  >
+                      <Text style={styles.helloText}>
+                          {currentStaff ? currentStaff.name : (isTableOccupied && occupiedBy ? occupiedBy : 'Select Staff')}
+                      </Text>
                       <Ionicons name="caret-down" size={20} color="white" />
                   </TouchableOpacity>
                   {isDropdownVisible && (
@@ -500,7 +529,8 @@ const PosScreen = () => {
                               </TouchableOpacity>
                           ) : (
                               <FlatList
-                                  data={staffList}
+                                  // If table is occupied, only show the occupying staff to allow login.
+                                  data={isTableOccupied && occupiedBy ? staffList.filter(staff => staff.name === occupiedBy) : staffList}
                                   keyExtractor={(item) => item.id}
                                   renderItem={({ item }) => (
                                       <TouchableOpacity
@@ -512,7 +542,9 @@ const PosScreen = () => {
                                   )}
                                   ListEmptyComponent={
                                       <View style={styles.dropdownItem}>
-                                          <Text style={styles.dropdownText}>No staff found</Text>
+                                          <Text style={styles.dropdownText}>
+                                            {isTableOccupied && occupiedBy ? `Login as ${occupiedBy}` : 'No staff found'}
+                                          </Text>
                                       </View>
                                   }
                               />
@@ -521,6 +553,9 @@ const PosScreen = () => {
                   )}
               </View>
           </View>
+
+
+
 
           {isDropdownVisible && (
               <TouchableWithoutFeedback onPress={() => setIsDropdownVisible(false)}>

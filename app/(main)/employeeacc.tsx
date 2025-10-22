@@ -1,7 +1,7 @@
 
 import { Ionicons } from '@expo/vector-icons';
 import { createUserWithEmailAndPassword } from 'firebase/auth';
-import { collection, doc, getDocs, query, serverTimestamp, setDoc, updateDoc, where } from 'firebase/firestore';
+import { collection, doc, onSnapshot, query, serverTimestamp, setDoc, updateDoc, where } from 'firebase/firestore';
 import React, { useEffect, useState } from 'react';
 import { Alert, FlatList, Modal, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { Colors } from '../../constants/theme';
@@ -21,20 +21,17 @@ const EmployeeAccScreen = () => {
     const [password, setPassword] = useState('');
 
     useEffect(() => {
-        fetchUsers();
-    }, []);
-
-    const fetchUsers = async () => {
-        try {
-            const usersCollection = query(collection(db, 'users'), where('role', '==', 'employee'), where("deletedAt", "==", null));
-            const usersSnapshot = await getDocs(usersCollection);
-            const list = usersSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as User));
+        const usersCollection = query(collection(db, 'users'), where('role', '==', 'employee'), where("deletedAt", "==", null));
+        const unsubscribe = onSnapshot(usersCollection, (snapshot) => {
+            const list = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as User));
             setEmployees(list.sort((a, b) => a.email.localeCompare(b.email)));
-        } catch (error) {
+        }, (error) => {
             console.error("Error fetching employees: ", error);
             Alert.alert("Error", "Could not fetch employee list.");
-        }
-    };
+        });
+
+        return () => unsubscribe();
+    }, []);
 
     const handleAddEmployee = async () => {
         if (!email || !password) {
@@ -56,7 +53,6 @@ const EmployeeAccScreen = () => {
             setModalVisible(false);
             setEmail('');
             setPassword('');
-            fetchUsers();
         } catch (error: any) {
             console.error("Error creating employee: ", error);
             Alert.alert('Error', error.message);
@@ -76,7 +72,6 @@ const EmployeeAccScreen = () => {
                         try {
                             const userDoc = doc(db, 'users', user.id);
                             await updateDoc(userDoc, { deletedAt: serverTimestamp() });
-                            fetchUsers();
                         } catch (error) {
                             console.error("Error deleting employee: ", error);
                             Alert.alert("Error", "Could not delete employee.");

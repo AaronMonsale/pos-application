@@ -1,5 +1,5 @@
 import DateTimePicker from '@react-native-community/datetimepicker';
-import { collection, getDocs, orderBy, query } from 'firebase/firestore';
+import { collection, onSnapshot, orderBy, query } from 'firebase/firestore';
 import React, { useEffect, useState } from 'react';
 import { ActivityIndicator, Alert, FlatList, Modal, Platform, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { Colors } from '../../constants/theme';
@@ -31,26 +31,24 @@ const TransactionsScreen = () => {
   const [showEndDatePicker, setShowEndDatePicker] = useState(false);
 
   useEffect(() => {
-    const fetchTransactions = async () => {
-      try {
-        const transactionsCollection = collection(db, 'transactions');
-        const q = query(transactionsCollection, orderBy('createdAt', 'desc'));
-        const querySnapshot = await getDocs(q);
-        const transactionsList = querySnapshot.docs.map(doc => ({
-          id: doc.id,
-          ...doc.data(),
-        })) as Transaction[];
-        setTransactions(transactionsList);
-        setFilteredTransactions(transactionsList);
-      } catch (error) {
-        console.error("Error fetching transactions: ", error);
-        Alert.alert("Error", "Could not fetch transactions.");
-      } finally {
-        setLoading(false);
-      }
-    };
+    setLoading(true);
+    const transactionsCollection = collection(db, 'transactions');
+    const q = query(transactionsCollection, orderBy('createdAt', 'desc'));
 
-    fetchTransactions();
+    const unsubscribe = onSnapshot(q, (querySnapshot) => {
+      const transactionsList = querySnapshot.docs.map(doc => ({
+        id: doc.id,
+        ...doc.data(),
+      })) as Transaction[];
+      setTransactions(transactionsList);
+      setLoading(false);
+    }, (error) => {
+      console.error("Error fetching transactions: ", error);
+      Alert.alert("Error", "Could not fetch transactions.");
+      setLoading(false);
+    });
+
+    return () => unsubscribe();
   }, []);
 
   useEffect(() => {

@@ -1,5 +1,5 @@
 import DateTimePicker from '@react-native-community/datetimepicker';
-import { collection, doc, getDocs, query, Timestamp, where } from "firebase/firestore";
+import { collection, doc, onSnapshot, query, Timestamp, where } from "firebase/firestore";
 import React, { useEffect, useMemo, useState } from 'react';
 import { Alert, Platform, ScrollView, StyleSheet, Text, TouchableOpacity, useWindowDimensions, View } from 'react-native';
 import { BarChart, LineChart, PieChart } from 'react-native-chart-kit';
@@ -58,40 +58,18 @@ const ReportsAnalytics = () => {
   const [transactions, setTransactions] = useState<Transaction[]>([]);
 
   useEffect(() => {
-    fetchTransactions();
-    fetchCategories();
+    const categoriesCollection = collection(db, 'categories');
+    const unsubscribe = onSnapshot(categoriesCollection, (categoriesSnapshot) => {
+        const categoriesList: PickerItem[] = categoriesSnapshot.docs.map(doc => ({ label: doc.data().name, value: doc.id }));
+        setCategories(categoriesList);
+    }, (error) => {
+        console.error("Error fetching categories: ", error);
+    });
+
+    return () => unsubscribe();
   }, []);
 
   useEffect(() => {
-    fetchTransactions();
-  }, [fromDate, toDate]);
-
-  useEffect(() => {
-    if (topSellingCategory) {
-        fetchFoods();
-    } else {
-        setFoods([]);
-    }
-  }, [topSellingCategory]);
-
-  const fetchCategories = async () => {
-    const categoriesCollection = collection(db, 'categories');
-    const categoriesSnapshot = await getDocs(categoriesCollection);
-    const categoriesList: PickerItem[] = categoriesSnapshot.docs.map(doc => ({ label: doc.data().name, value: doc.id }));
-    setCategories(categoriesList);
-  };
-
-  const fetchFoods = async () => {
-    if (topSellingCategory) {
-        const categoryRef = doc(db, 'categories', topSellingCategory);
-        const foodsCollectionRef = collection(categoryRef, 'foods');
-        const foodsSnapshot = await getDocs(foodsCollectionRef);
-        const foodsList: PickerItem[] = foodsSnapshot.docs.map(doc => ({ label: doc.data().name, value: doc.id }));
-        setFoods(foodsList);
-    }
-  };
-
-  const fetchTransactions = async () => {
     try {
         const startOfDay = new Date(fromDate);
         startOfDay.setHours(0, 0, 0, 0);
@@ -105,19 +83,41 @@ const ReportsAnalytics = () => {
             where('createdAt', '<=', Timestamp.fromDate(endOfDay))
         );
 
-        const querySnapshot = await getDocs(q);
-        const fetchedTransactions = querySnapshot.docs.map(doc => ({
-            id: doc.id,
-            ...doc.data(),
-        })) as Transaction[];
+        const unsubscribe = onSnapshot(q, (querySnapshot) => {
+            const fetchedTransactions = querySnapshot.docs.map(doc => ({
+                id: doc.id,
+                ...doc.data(),
+            })) as Transaction[];
+            setTransactions(fetchedTransactions);
+        }, (error) => {
+            console.error("Error fetching transactions: ", error);
+            Alert.alert("Error", "Could not fetch transactions.");
+        });
 
-        setTransactions(fetchedTransactions);
+        return () => unsubscribe();
     } catch (error) {
-        console.error("Error fetching transactions: ", error);
-        Alert.alert("Error", "Could not fetch transactions.");
+        console.error("Error setting up transaction listener: ", error);
+        Alert.alert("Error", "Could not set up transaction listener.");
     }
-  };
-  
+  }, [fromDate, toDate]);
+
+  useEffect(() => {
+    if (topSellingCategory) {
+        const categoryRef = doc(db, 'categories', topSellingCategory);
+        const foodsCollectionRef = collection(categoryRef, 'foods');
+        const unsubscribe = onSnapshot(foodsCollectionRef, (foodsSnapshot) => {
+            const foodsList: PickerItem[] = foodsSnapshot.docs.map(doc => ({ label: doc.data().name, value: doc.id }));
+            setFoods(foodsList);
+        }, (error) => {
+            console.error("Error fetching foods: ", error);
+        });
+
+        return () => unsubscribe();
+    } else {
+        setFoods([]);
+    }
+  }, [topSellingCategory]);
+
   const { totalSales, totalServiceCharge } = useMemo(() => {
     let sales = 0;
     let serviceCharge = 0;
@@ -307,6 +307,7 @@ const pieChartData = useMemo(() => {
             items={categories}
             style={pickerSelectStyles}
             placeholder={{ label: "Select a category", value: null }}
+            value={topSellingCategory}
         />
         <RNPickerSelect
             onValueChange={(value) => setTopSellingFood(value)}

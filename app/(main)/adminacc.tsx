@@ -1,6 +1,6 @@
 
 import { Ionicons } from '@expo/vector-icons';
-import { collection, doc, getDocs, query, serverTimestamp, updateDoc, where } from 'firebase/firestore';
+import { collection, doc, onSnapshot, query, serverTimestamp, updateDoc, where } from 'firebase/firestore';
 import React, { useEffect, useState } from 'react';
 import { Alert, FlatList, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { Colors } from '../../constants/theme';
@@ -17,20 +17,19 @@ const AdminAccScreen = () => {
     const [admins, setAdmins] = useState<User[]>([]);
 
     useEffect(() => {
-        fetchUsers();
-    }, []);
-
-    const fetchUsers = async () => {
-        try {
-            const usersCollection = query(collection(db, 'users'), where('role', '==', 'admin'), where("deletedAt", "==", null));
-            const usersSnapshot = await getDocs(usersCollection);
-            const list = usersSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as User));
+        const usersCollection = query(collection(db, 'users'), where('role', '==', 'admin'), where("deletedAt", "==", null));
+        
+        const unsubscribe = onSnapshot(usersCollection, (snapshot) => {
+            const list = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as User));
             setAdmins(list.sort((a, b) => a.email.localeCompare(b.email)));
-        } catch (error) {
+        }, (error) => {
             console.error("Error fetching admins: ", error);
             Alert.alert("Error", "Could not fetch admin list.");
-        }
-    };
+        });
+
+        // Cleanup subscription on unmount
+        return () => unsubscribe();
+    }, []);
 
     const handleDelete = (user: User) => {
         Alert.alert(
@@ -45,7 +44,7 @@ const AdminAccScreen = () => {
                         try {
                             const userDoc = doc(db, 'users', user.id);
                             await updateDoc(userDoc, { deletedAt: serverTimestamp() });
-                            fetchUsers();
+                            // No need to call fetchUsers() anymore, onSnapshot will handle the update
                         } catch (error) {
                             console.error("Error deleting admin: ", error);
                             Alert.alert("Error", "Could not delete admin.");

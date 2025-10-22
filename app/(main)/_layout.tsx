@@ -17,6 +17,7 @@ const MainLayout = () => {
             <Stack.Screen name="discount" options={{ title: "Discount" }} />
             <Stack.Screen name="user-role" options={{ title: "User Roles" }} />
             <Stack.Screen name="admin" options={{ headerShown: false }} />
+            <Stack.Screen name='kitchen' options={{ title: "Kitchen" }} />
         </Stack>
     );
 };

@@ -1,5 +1,5 @@
 import { MaterialIcons } from '@expo/vector-icons';
-import { addDoc, collection, deleteDoc, doc, getDocs, updateDoc, query, where, serverTimestamp } from "firebase/firestore";
+import { addDoc, collection, deleteDoc, doc, onSnapshot, updateDoc, query, where, serverTimestamp } from "firebase/firestore";
 import React, { useEffect, useState } from 'react';
 import { Alert, FlatList, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { Colors } from '../../constants/theme';
@@ -32,19 +32,38 @@ const MenuManagement = () => {
   const [editingFood, setEditingFood] = useState<Food | null>(null);
 
   useEffect(() => {
-    fetchCategories();
+    const categoriesCollection = query(collection(db, 'categories'), where("deletedAt", "==", null));
+    const unsubscribe = onSnapshot(categoriesCollection, (snapshot) => {
+      const categoriesList = snapshot.docs.map(doc => ({
+        id: doc.id,
+        name: doc.data().name,
+        foods: [], // Initialize with empty foods
+      })) as Category[];
+      setCategories(categoriesList);
+    });
+
+    return () => unsubscribe();
   }, []);
 
-  const fetchCategories = async () => {
-    const categoriesCollection = query(collection(db, 'categories'), where("deletedAt", "==", null));
-    const categoriesSnapshot = await getDocs(categoriesCollection);
-    const categoriesList = categoriesSnapshot.docs.map(doc => ({
-      id: doc.id,
-      name: doc.data().name,
-      foods: [], // Initialize with empty foods
-    })) as Category[];
-    setCategories(categoriesList);
-  };
+  useEffect(() => {
+    if (selectedCategory) {
+      const foodsCollectionRef = query(collection(db, 'categories', selectedCategory.id, 'foods'), where("deletedAt", "==", null));
+      const unsubscribe = onSnapshot(foodsCollectionRef, (snapshot) => {
+        const foodsList = snapshot.docs.map(foodDoc => {
+          const data = foodDoc.data();
+          return {
+            id: foodDoc.id,
+            name: data.name,
+            price: data.price,
+            description: data.description
+          };
+        }) as Food[];
+        setSelectedCategory(prevCategory => ({ ...prevCategory!, foods: foodsList }));
+      });
+
+      return () => unsubscribe();
+    }
+  }, [selectedCategory?.id]);
 
   const handleCreateCategory = async () => {
     if (!newCategoryName) {
@@ -54,7 +73,6 @@ const MenuManagement = () => {
     try {
       await addDoc(collection(db, 'categories'), { name: newCategoryName, deletedAt: null });
       setNewCategoryName('');
-      fetchCategories();
       navigateToList();
       Alert.alert('Success', 'Category created successfully');
     } catch (error) {
@@ -85,20 +103,6 @@ const MenuManagement = () => {
       setNewFoodPrice('');
       setNewFoodDescription('');
 
-      // Re-fetch foods for the current category to show the new item.
-      const foodsQuery = query(collection(db, 'categories', selectedCategory.id, 'foods'), where("deletedAt", "==", null));
-      const foodsSnapshot = await getDocs(foodsQuery);
-      const foodsList = foodsSnapshot.docs.map(foodDoc => {
-          const data = foodDoc.data();
-          return {
-              id: foodDoc.id,
-              name: data.name,
-              price: data.price,
-              description: data.description
-          };
-      }) as Food[];
-      setSelectedCategory(prevCategory => ({ ...prevCategory!, foods: foodsList }));
-
       setScreen('categoryDetails');
       Alert.alert('Success', 'Food added successfully');
     } catch (error) {
@@ -107,21 +111,8 @@ const MenuManagement = () => {
     }
   };
 
-  const handleSelectCategory = async (category: Category) => {
-    const categoryRef = doc(db, 'categories', category.id);
-    const foodsCollectionRef = query(collection(categoryRef, 'foods'), where("deletedAt", "==", null));
-    const foodsSnapshot = await getDocs(foodsCollectionRef);
-    const foodsList = foodsSnapshot.docs.map(foodDoc => {
-        const data = foodDoc.data();
-        return {
-            id: foodDoc.id,
-            name: data.name,
-            price: data.price,
-            description: data.description
-        };
-    }) as Food[];
-
-    setSelectedCategory({ ...category, foods: foodsList });
+  const handleSelectCategory = (category: Category) => {
+    setSelectedCategory(category);
     setScreen('categoryDetails');
   };
 
@@ -135,7 +126,6 @@ const MenuManagement = () => {
       await updateDoc(categoryRef, { name: newCategoryName });
       setNewCategoryName('');
       setEditingCategory(null);
-      fetchCategories();
       navigateToList();
       Alert.alert('Success', 'Category updated successfully');
     } catch (error) {
@@ -161,8 +151,6 @@ const MenuManagement = () => {
       setNewFoodDescription('');
       setEditingFood(null);
 
-      // Re-fetch foods to show the updated item.
-      handleSelectCategory(selectedCategory);
       setScreen('categoryDetails');
       Alert.alert('Success', 'Food updated successfully');
     } catch (error) {
@@ -184,7 +172,6 @@ const MenuManagement = () => {
             try {
               const categoryRef = doc(db, 'categories', categoryId);
               await updateDoc(categoryRef, { deletedAt: serverTimestamp() });
-              fetchCategories();
               navigateToList();
               Alert.alert('Success', 'Category deleted successfully');
             } catch (error) {
@@ -211,8 +198,6 @@ const MenuManagement = () => {
             try {
                 const foodRef = doc(db, 'categories', selectedCategory.id, 'foods', foodId);
                 await updateDoc(foodRef, { deletedAt: serverTimestamp() });
-              // Re-fetch foods to show the updated list.
-              handleSelectCategory(selectedCategory);
               Alert.alert('Success', 'Food deleted successfully');
             } catch (error) {
               console.error("Error deleting food: ", error);
