@@ -1,17 +1,52 @@
 import { Ionicons } from '@expo/vector-icons';
 import { Stack, useRouter } from 'expo-router';
 import { signOut } from 'firebase/auth';
-import React from 'react';
+import React, { createContext, useContext, useState } from 'react';
 import { Alert, TouchableOpacity } from 'react-native';
 import { auth } from '../../firebase';
+
+// --- Staff Context for Global State ---
+
+interface Staff {
+    id: string;
+    name: string;
+    pin: string;
+}
+
+interface StaffContextType {
+    currentStaff: Staff | null;
+    setCurrentStaff: (staff: Staff | null) => void;
+}
+
+const StaffContext = createContext<StaffContextType | undefined>(undefined);
+
+export const useStaff = () => {
+    const context = useContext(StaffContext);
+    if (!context) {
+        throw new Error('useStaff must be used within a StaffProvider');
+    }
+    return context;
+};
+
+const StaffProvider = ({ children }: { children: React.ReactNode }) => {
+    const [currentStaff, setCurrentStaff] = useState<Staff | null>(null);
+    
+    return (
+        <StaffContext.Provider value={{ currentStaff, setCurrentStaff }}>
+            {children}
+        </StaffContext.Provider>
+    );
+};
+
+// --- Main Layout Component ---
 
 const MainLayout = () => {
     const router = useRouter();
 
-    const handleLogout = async () => {
+    const handleKitchenLogout = async () => {
         try {
             await signOut(auth);
-            router.replace('/(auth)/login'); // Redirect to login after logout
+            router.replace('/(auth)/login');
         } catch (error) {
             console.error("Logout Error:", error);
             Alert.alert("Logout Failed", "An error occurred while logging out.");
@@ -35,11 +70,23 @@ const MainLayout = () => {
             <Stack.Screen name="admin" options={{ headerShown: false }} />
             <Stack.Screen 
                 name='kitchen' 
-                options={{ headerShown: false }}
+                options={{ 
+                    headerShown: false 
+                }}
             />
             <Stack.Screen name='pending-order' options={{ headerShown: false }} />
         </Stack>
     );
 };
 
-export default MainLayout;
+// --- Root Layout with Provider ---
+
+const RootLayout = () => {
+    return (
+        <StaffProvider>
+            <MainLayout />
+        </StaffProvider>
+    );
+}
+
+export default RootLayout;

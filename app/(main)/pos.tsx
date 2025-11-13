@@ -5,7 +5,8 @@ import React, { useEffect, useState } from 'react';
 import { Alert, FlatList, Modal, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, TouchableWithoutFeedback, useWindowDimensions, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Colors } from '../../constants/theme';
-import { auth, db } from '../../firebase';
+import { db } from '../../firebase';
+import { useStaff } from './_layout'; // Import the new hook
 
 // --- Interfaces ---
 interface Food { id: string; name: string; price: number; description: string; categoryId: string; }
@@ -38,11 +39,12 @@ const OrderItem = ({ item, onRemove, onIncrement, onDecrement, onPress }: { item
 const PosScreen = () => {
   const router = useRouter();
   const params = useLocalSearchParams();
-  const { tableId, tableName, staff: staffJson } = params as { tableId: string; tableName: string; staff?: string };
+  const { tableId, tableName } = params as { tableId: string; tableName: string; };
   const { width, height } = useWindowDimensions();
   const isLandscape = width > height;
 
-  // --- State ---
+  // --- Global and Local State ---
+  const { currentStaff, setCurrentStaff } = useStaff(); // Use global staff state
   const [categories, setCategories] = useState<Category[]>([]);
   const [selectedCategory, setSelectedCategory] = useState<Category | null>(null);
   const [isModalVisible, setIsModalVisible] = useState(false);
@@ -64,19 +66,16 @@ const PosScreen = () => {
   const [isTableOccupied, setIsTableOccupied] = useState(false);
   const [occupiedBy, setOccupiedBy] = useState<string | null>(null);
   const [staffList, setStaffList] = useState<Staff[]>([]);
-  const [currentStaff, setCurrentStaff] = useState<Staff | null>(() => { try { return staffJson ? JSON.parse(staffJson) : null; } catch (e) { return null; } });
   const [isPinModalVisible, setIsPinModalVisible] = useState(false);
   const [selectedStaffForLogin, setSelectedStaffForLogin] = useState<Staff | null>(null);
   const [enteredPin, setEnteredPin] = useState('');
+
   const isSystemLocked = !currentStaff;
   
   const handleBack = () => {
     router.back();
   }
 
-  // --- Data Fetching and Real-time Listeners ---
-
-  // Effect for fetching static data like categories and staff list once
   useEffect(() => {
     const fetchStaticData = async () => {
         try {
@@ -101,47 +100,36 @@ const PosScreen = () => {
     fetchStaticData();
   }, []);
 
-  // Effect for setting up the real-time listener for the table's order data
   useEffect(() => {
-    if (!tableId) return; // Don't run if there's no tableId
+    if (!tableId) return;
 
     const tableDocRef = doc(db, 'tables', tableId);
     
-    // onSnapshot creates the listener and returns an unsubscribe function
     const unsubscribe = onSnapshot(tableDocRef, (docSnap) => {
         if (docSnap.exists()) {
             const tableData = docSnap.data();
-            
-            // Update the table status in real-time
             setIsTableOccupied(tableData.occupied || false);
             setOccupiedBy(tableData.occupiedBy || null);
             
-            // Update the order items from the database
             const orderFromDb = (tableData.order || []).map((item: any, index: number) => ({
                 ...item,
-                id: `${item.food.id}-${Date.now()}-${index}` // Create a unique ID for the FlatList
+                id: `${item.food.id}-${Date.now()}-${index}`
             }));
 
-            // Only update state if the order has actually changed
             if (JSON.stringify(orderFromDb) !== JSON.stringify(orderItems)) {
                 setOrderItems(orderFromDb);
             }
         } else {
             console.error("Table document not found!");
-            Alert.alert("Error", "Could not find the specified table.", [
-                { text: "OK", onPress: () => router.back() }
-            ]);
+            Alert.alert("Error", "Could not find the specified table.", [{ text: "OK", onPress: () => router.back() }]);
         }
     }, (error) => {
         console.error("Failed to listen to table changes:", error);
         Alert.alert("Error", "Lost connection to the table data.");
     });
 
-    // Cleanup function: This will be called when the component unmounts
-    // or when the tableId changes, preventing memory leaks.
     return () => unsubscribe();
-    
-  }, [tableId]); // Dependency array: ensures this effect re-runs if the user navigates to a different table
+  }, [tableId]);
 
   useEffect(() => {
     const newSubtotal = orderItems.reduce((acc, item) => acc + (item.food.price * item.quantity), 0);
@@ -171,16 +159,8 @@ const PosScreen = () => {
     if (orderItems.length === 0) {
       try {
         const tableDoc = doc(db, 'tables', tableId);
-        await updateDoc(tableDoc, { 
-            occupied: false, 
-            occupiedBy: null, 
-            staffId: null, 
-            order: [],
-            status: 'available' // Reset status when cleared
-        });
-        Alert.alert("Table Cleared", `${tableName} is now available.`, [
-          { text: "OK", onPress: () => router.replace('/(main)/tables') }
-        ]);
+        await updateDoc(tableDoc, { occupied: false, occupiedBy: null, staffId: null, order: [], status: 'available', kitchenStatus: null });
+        Alert.alert("Table Cleared", `${tableName} is now available.`, [{ text: "OK", onPress: () => router.replace('/(main)/tables') }]);
       } catch (error) {
         console.error("Error clearing order: ", error);
         Alert.alert("Error", "Could not clear the order from the table.");
@@ -190,39 +170,26 @@ const PosScreen = () => {
 
     try {
       const tableDocRef = doc(db, 'tables', tableId);
-      
-      // Get the current table data to check the status
       const tableDocSnap = await getDoc(tableDocRef);
       const currentStatus = tableDocSnap.exists() ? tableDocSnap.data().status : null;
 
-      const orderToSave = orderItems.map(item => ({
-        food: item.food,
-        quantity: item.quantity,
-        discount: item.discount || null,
-        note: item.note || '',
-      }));
+      const orderToSave = orderItems.map(item => ({ food: { id: item.food.id, name: item.food.name, price: item.food.price }, quantity: item.quantity, discount: item.discount || null, note: item.note || '' }));
       
       const updateData: any = {
         occupied: true,
         occupiedBy: currentStaff.name,
         staffId: currentStaff.id,
         order: orderToSave,
-        status: 'serving', // This status will make the order appear in the kitchen
+        status: 'serving', 
+        kitchenStatus: 'pending', 
       };
 
-      // Only set a new timestamp if it's a new order for the kitchen
-      // This prevents the order from losing its place in the queue on every update
       if (currentStatus !== 'serving') {
         updateData.orderPlacedAt = serverTimestamp();
       }
       
       await updateDoc(tableDocRef, updateData);
-
-      // Navigate to the pending order screen
-      router.replace({
-        pathname: '/(main)/pending-order',
-        params: { tableId, tableName },
-      });
+      router.replace({ pathname: '/(main)/pending-order', params: { tableId, tableName } });
 
     } catch (error) {
       console.error("Error saving order: ", error);
@@ -233,36 +200,33 @@ const PosScreen = () => {
   const handlePay = async () => {
     if (orderItems.length === 0) return Alert.alert("Empty Order", "Cannot process an empty order.");
     try {
-        const transactionItems = orderItems.map(item => ({ id: item.food.id, name: item.food.name, price: item.food.price, quantity: item.quantity, discount: item.discount || 0, note: item.note || '', total: item.food.price * item.quantity * (1 - (item.discount || 0) / 100), }));
-        await addDoc(collection(db, "transactions"), { items: transactionItems, subtotal: subtotal, tax: tax, serviceCharge: serviceCharge, discount: discountAmount, total: total, createdAt: serverTimestamp(), staffId: currentStaff?.id || null, staffName: currentStaff?.name || null, tableId: tableId || null, tableName: tableName || null, status: 'completed' });
+        const transactionItems = orderItems.map(item => ({ id: item.food.id, name: item.food.name, price: item.food.price, quantity: item.quantity, discount: item.discount || 0, note: item.note || '', total: item.food.price * item.quantity * (1 - (item.discount || 0) / 100) }));
+        await addDoc(collection(db, "transactions"), { items: transactionItems, subtotal, tax, serviceCharge, discount: discountAmount, total, createdAt: serverTimestamp(), staffId: currentStaff?.id || null, staffName: currentStaff?.name || null, tableId: tableId || null, tableName: tableName || null, status: 'completed' });
         if (tableId) {
-            await updateDoc(doc(db, 'tables', tableId), { occupied: false, occupiedBy: null, staffId: null, order: [], });
+            await updateDoc(doc(db, 'tables', tableId), { occupied: false, occupiedBy: null, staffId: null, order: [], status: 'available', kitchenStatus: null });
         }
-        router.replace({ 
-            pathname: '/(main)/summary', 
-            params: { 
-                items: JSON.stringify(transactionItems), 
-                subtotal: subtotal.toString(), 
-                tax: tax.toString(), 
-                serviceCharge: serviceCharge.toString(), 
-                discount: discountAmount.toString(), 
-                total: total.toString(), 
-                staffName: currentStaff?.name || 'N/A', 
-                tableName: tableName || 'N/A',
-            } 
-        });
-    } catch (error) { console.error("Error processing payment: ", error); Alert.alert("Payment Error", "There was an error processing the payment."); }
+        router.replace({ pathname: '/(main)/summary', params: { items: JSON.stringify(transactionItems), subtotal: subtotal.toString(), tax: tax.toString(), serviceCharge: serviceCharge.toString(), discount: discountAmount.toString(), total: total.toString(), staffName: currentStaff?.name || 'N/A', tableName: tableName || 'N/A' } });
+    } catch (error) { 
+        console.error("Error processing payment: ", error); 
+        Alert.alert("Payment Error", "There was an error processing the payment."); 
+    }
   };
 
-  const handleCategoryPress = async (category: Category) => { if (isSystemLocked) return; const foodsSnapshot = await getDocs(collection(doc(db, 'categories', category.id), 'foods')); const foodsList = foodsSnapshot.docs.map(foodDoc => ({ id: foodDoc.id, ...foodDoc.data(), categoryId: category.id } as Food)); setSelectedCategory({ ...category, foods: foodsList }); setIsModalVisible(true); };
+  const handleCategoryPress = async (category: Category) => {
+      if (isSystemLocked) return;
+      const foodsSnapshot = await getDocs(collection(doc(db, 'categories', category.id), 'foods'));
+      const foodsList = foodsSnapshot.docs.map(foodDoc => ({ id: foodDoc.id, ...foodDoc.data(), categoryId: category.id } as Food));
+      setSelectedCategory({ ...category, foods: foodsList });
+      setIsModalVisible(true);
+  };
   
   const addToOrder = (food: Food) => {
-    const existingItem = orderItems.find(item => item.food.id === food.id && !item.discount);
-    if (existingItem) {
-        incrementQuantity(existingItem.id);
-    } else {
-        setOrderItems(prevItems => [...prevItems, { id: `${food.id}-${Date.now()}`, food, quantity: 1, discount: null, note: '' }]);
-    }
+      const existingItem = orderItems.find(item => item.food.id === food.id && !item.discount);
+      if (existingItem) {
+          incrementQuantity(existingItem.id);
+      } else {
+          setOrderItems(prevItems => [...prevItems, { id: `${food.id}-${Date.now()}`, food, quantity: 1, discount: null, note: '' }]);
+      }
   };
 
   const incrementQuantity = (itemId: string) => { setOrderItems(prevItems => prevItems.map(item => item.id === itemId ? { ...item, quantity: item.quantity + 1 } : item)); };
@@ -272,9 +236,33 @@ const PosScreen = () => {
   const handleUpdateItem = () => { if (selectedOrderItem) { const qty = parseInt(editQuantity, 10); const disc = parseFloat(editDiscount); setOrderItems(prevItems => prevItems.map(item => item.id === selectedOrderItem.id ? { ...item, quantity: !isNaN(qty) && qty > 0 ? qty : item.quantity, discount: !isNaN(disc) && disc > 0 ? disc : null, note: editNote, } : item )); closeItemEditor(); } };
   const closeItemEditor = () => { setIsItemEditorVisible(false); setSelectedOrderItem(null); setEditQuantity(''); setEditDiscount(''); setEditNote(''); };
   const applyDiscount = (discount: Discount) => { setAppliedDiscount(discount); setIsDiscountModalVisible(false); }
-  const handleStaffSelect = (staff: Staff) => { setSelectedStaffForLogin(staff); setIsDropdownVisible(false); setIsPinModalVisible(true); };
-  const handlePinLogin = () => { if (enteredPin === selectedStaffForLogin?.pin) { setCurrentStaff(selectedStaffForLogin); setIsPinModalVisible(false); setEnteredPin(''); } else { Alert.alert("Invalid PIN", "The PIN you entered is incorrect."); setEnteredPin(''); } };
-  const handleLogout = () => { if (orderItems.length > 0) { Alert.alert( "Unsaved Order", "There are items in the current order. Please save or clear it before logging out.", [{ text: "Cancel", style: "cancel" }, { text: "Save Order", onPress: handleSaveOrder }, { text: "Logout Anyway", style: "destructive", onPress: () => { auth.signOut(); router.replace('/(auth)/login'); } }] ); } else { auth.signOut(); router.replace('/(auth)/login'); } setIsDropdownVisible(false); };
+  
+  const handleStaffSelect = (staff: Staff) => {
+    setSelectedStaffForLogin(staff);
+    setIsDropdownVisible(false);
+    setIsPinModalVisible(true);
+  };
+
+  const handlePinLogin = () => {
+    if (enteredPin === selectedStaffForLogin?.pin) {
+      setCurrentStaff(selectedStaffForLogin);
+      setIsPinModalVisible(false);
+      setEnteredPin('');
+    } else {
+      Alert.alert("Invalid PIN", "The PIN you entered is incorrect.");
+      setEnteredPin('');
+    }
+  };
+
+  const handleLogout = ()=>
+  {
+    if (orderItems.length > 0) {
+      Alert.alert( "Unsaved Order", "There are items in the current order. Please save or clear it before logging out.", [{ text: "Cancel", style: "cancel" }, { text: "Save Order", onPress: handleSaveOrder }, { text: "Logout Anyway", style: "destructive", onPress: () => setCurrentStaff(null) }] );
+    } else {
+      setCurrentStaff(null);
+    }
+    setIsDropdownVisible(false);
+  };
 
   const renderFoodItem = ({ item }: { item: Food }) => (
     <TouchableOpacity onPress={() => { addToOrder(item); setIsModalVisible(false); }}>
@@ -542,10 +530,7 @@ const PosScreen = () => {
           </Modal>
 
           <View style={styles.header}>
-              <TouchableOpacity
-                  style={styles.headerBackButton}
-                  onPress={handleBack}
-              >
+              <TouchableOpacity style={styles.headerBackButton} onPress={handleBack}>
                   <Ionicons name="arrow-back-outline" size={24} color="white" />
               </TouchableOpacity>
               <View style={styles.headerTableInfo}>
@@ -558,11 +543,10 @@ const PosScreen = () => {
                   <TouchableOpacity
                       style={styles.helloButton}
                       onPress={() => setIsDropdownVisible(!isDropdownVisible)}
-                      // Corrected Logic: Disable only if a different staff is logged in.
                       disabled={!!(currentStaff && isTableOccupied && occupiedBy && currentStaff.name !== occupiedBy)}
                   >
                       <Text style={styles.helloText}>
-                          {currentStaff ? currentStaff.name : (isTableOccupied && occupiedBy ? occupiedBy : 'Select Staff')}
+                          {currentStaff ? currentStaff.name : 'Select Staff'}
                       </Text>
                       <Ionicons name="caret-down" size={20} color="white" />
                   </TouchableOpacity>
@@ -574,8 +558,7 @@ const PosScreen = () => {
                               </TouchableOpacity>
                           ) : (
                               <FlatList
-                                  // If table is occupied, only show the occupying staff to allow login.
-                                  data={isTableOccupied && occupiedBy ? staffList.filter(staff => staff.name === occupiedBy) : staffList}
+                                  data={staffList}
                                   keyExtractor={(item) => item.id}
                                   renderItem={({ item }) => (
                                       <TouchableOpacity
@@ -587,9 +570,7 @@ const PosScreen = () => {
                                   )}
                                   ListEmptyComponent={
                                       <View style={styles.dropdownItem}>
-                                          <Text style={styles.dropdownText}>
-                                            {isTableOccupied && occupiedBy ? `Login as ${occupiedBy}` : 'No staff found'}
-                                          </Text>
+                                          <Text style={styles.dropdownText}>No staff found</Text>
                                       </View>
                                   }
                               />
@@ -598,9 +579,6 @@ const PosScreen = () => {
                   )}
               </View>
           </View>
-
-
-
 
           {isDropdownVisible && (
               <TouchableWithoutFeedback onPress={() => setIsDropdownVisible(false)}>
