@@ -1,74 +1,64 @@
 import DateTimePicker from '@react-native-community/datetimepicker';
-import { collection, onSnapshot, orderBy, query } from 'firebase/firestore';
+import { PrismaClient, Transaction, TransactionItem } from '@prisma/client';
 import React, { useEffect, useState } from 'react';
 import { ActivityIndicator, Alert, FlatList, Modal, Platform, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { Colors } from '../../constants/theme';
-import { db } from '../../firebase';
 
-interface Transaction {
-  id: string;
-  items: { name: string; price: number }[];
-  subtotal: number;
-  tax: number;
-  serviceCharge: number;
-  discount?: number;
-  total: number;
-  createdAt: { toDate: () => Date };
-  currency: string;
-  staffName?: string;
-  tableName?: string;
+const prisma = new PrismaClient();
+
+interface TransactionWithItems extends Transaction {
+  items: TransactionItem[];
 }
 
 const TransactionsScreen = () => {
-  const [transactions, setTransactions] = useState<Transaction[]>([]);
-  const [filteredTransactions, setFilteredTransactions] = useState<Transaction[]>([]);
+  const [transactions, setTransactions] = useState<TransactionWithItems[]>([]);
+  const [filteredTransactions, setFilteredTransactions] = useState<TransactionWithItems[]>([]);
   const [loading, setLoading] = useState(true);
   const [isModalVisible, setIsModalVisible] = useState(false);
-  const [selectedTransaction, setSelectedTransaction] = useState<Transaction | null>(null);
+  const [selectedTransaction, setSelectedTransaction] = useState<TransactionWithItems | null>(null);
   const [startDate, setStartDate] = useState<Date | null>(null);
   const [endDate, setEndDate] = useState<Date | null>(null);
   const [showStartDatePicker, setShowStartDatePicker] = useState(false);
   const [showEndDatePicker, setShowEndDatePicker] = useState(false);
 
-  useEffect(() => {
+  const fetchTransactions = async () => {
     setLoading(true);
-    const transactionsCollection = collection(db, 'transactions');
-    const q = query(transactionsCollection, orderBy('createdAt', 'desc'));
-
-    const unsubscribe = onSnapshot(q, (querySnapshot) => {
-      const transactionsList = querySnapshot.docs.map(doc => ({
-        id: doc.id,
-        ...doc.data(),
-      })) as Transaction[];
+    try {
+      const transactionsList = await prisma.transaction.findMany({
+        include: { items: true },
+        orderBy: { createdAt: 'desc' },
+      });
       setTransactions(transactionsList);
-      setLoading(false);
-    }, (error) => {
+    } catch (error) {
       console.error("Error fetching transactions: ", error);
       Alert.alert("Error", "Could not fetch transactions.");
+    } finally {
       setLoading(false);
-    });
+    }
+  };
 
-    return () => unsubscribe();
+  useEffect(() => {
+    fetchTransactions();
   }, []);
 
   useEffect(() => {
     let filtered = transactions;
 
     if (startDate) {
-        const startOfDay = new Date(startDate);
-        startOfDay.setHours(0, 0, 0, 0);
-        filtered = filtered.filter(t => t.createdAt.toDate() >= startOfDay);
+      const startOfDay = new Date(startDate);
+      startOfDay.setHours(0, 0, 0, 0);
+      filtered = filtered.filter(t => new Date(t.createdAt) >= startOfDay);
     }
     if (endDate) {
-        const endOfDay = new Date(endDate);
-        endOfDay.setHours(23, 59, 59, 999);
-        filtered = filtered.filter(t => t.createdAt.toDate() <= endOfDay);
+      const endOfDay = new Date(endDate);
+      endOfDay.setHours(23, 59, 59, 999);
+      filtered = filtered.filter(t => new Date(t.createdAt) <= endOfDay);
     }
 
     setFilteredTransactions(filtered);
   }, [startDate, endDate, transactions]);
 
-  const handleTransactionPress = (transaction: Transaction) => {
+  const handleTransactionPress = (transaction: TransactionWithItems) => {
     setSelectedTransaction(transaction);
     setIsModalVisible(true);
   };
@@ -87,24 +77,24 @@ const TransactionsScreen = () => {
     }
   };
 
-  const renderTransaction = ({ item }: { item: Transaction }) => (
+  const renderTransaction = ({ item }: { item: TransactionWithItems }) => (
     <TouchableOpacity onPress={() => handleTransactionPress(item)}>
         <View style={styles.transactionContainer}>
             <View style={styles.transactionHeader}>
                 <Text style={styles.transactionId}>ID: {item.id}</Text>
-                <Text style={styles.transactionDate}>{item.createdAt.toDate().toLocaleDateString()}</Text>
+                <Text style={styles.transactionDate}>{new Date(item.createdAt).toLocaleDateString()}</Text>
             </View>
             {item.staffName && <Text style={styles.staffNameText}>Processed by: {item.staffName}</Text>}
             {item.tableName && <Text style={styles.tableNameText}>From: {item.tableName}</Text>}
             <View style={styles.itemsContainer}>
                 {item.items.map((food, index) => (
-                    <Text key={index} style={styles.itemText}>{food.name} - {item.currency}{food.price.toFixed(2)}</Text>
+                    <Text key={index} style={styles.itemText}>{food.name} - ₱{food.price.toFixed(2)}</Text>
                 ))}
             </View>
-            {item.discount !== undefined && item.discount > 0 && (
+            {item.discount > 0 && (
                 <Text style={styles.discountText}>Discount Applied!</Text>
             )}
-            <Text style={styles.total}>Total: {item.currency}{item.total.toFixed(2)}</Text>
+            <Text style={styles.total}>Total: ₱{item.total.toFixed(2)}</Text>
         </View>
     </TouchableOpacity>
   );
@@ -160,22 +150,22 @@ const TransactionsScreen = () => {
                             <Text style={styles.modalText}>ID: {selectedTransaction.id}</Text>
                             {selectedTransaction.staffName && <Text style={styles.modalText}>Staff: {selectedTransaction.staffName}</Text>}
                             {selectedTransaction.tableName && <Text style={styles.modalText}>Table: {selectedTransaction.tableName}</Text>}
-                            <Text style={styles.modalText}>Date: {selectedTransaction.createdAt.toDate().toLocaleString()}</Text>
+                            <Text style={styles.modalText}>Date: {new Date(selectedTransaction.createdAt).toLocaleString()}</Text>
                             <View style={styles.itemsContainer}>
                                 {selectedTransaction.items.map((item, index) => (
-                                    <Text key={index} style={styles.itemText}>{item.name} - {selectedTransaction.currency}{item.price.toFixed(2)}</Text>
+                                    <Text key={index} style={styles.itemText}>{item.name} - ₱{item.price.toFixed(2)}</Text>
                                 ))
                                 }
                             </View>
-                            <Text style={styles.modalText}>Subtotal: {selectedTransaction.currency}{selectedTransaction.subtotal.toFixed(2)}</Text>
-                            <Text style={styles.modalText}>Tax: {selectedTransaction.currency}{selectedTransaction.tax.toFixed(2)}</Text>
+                            <Text style={styles.modalText}>Subtotal: ₱{selectedTransaction.subtotal.toFixed(2)}</Text>
+                            <Text style={styles.modalText}>Tax: ₱{selectedTransaction.tax.toFixed(2)}</Text>
                             {selectedTransaction.serviceCharge > 0 && (
-                                <Text style={styles.modalText}>Service Charge: {selectedTransaction.currency}{selectedTransaction.serviceCharge.toFixed(2)}</Text>
+                                <Text style={styles.modalText}>Service Charge: ₱{selectedTransaction.serviceCharge.toFixed(2)}</Text>
                             )}
-                            {selectedTransaction.discount !== undefined && selectedTransaction.discount > 0 && (
-                                <Text style={styles.modalText}>Discount: -{selectedTransaction.currency}{selectedTransaction.discount.toFixed(2)}</Text>
+                            {selectedTransaction.discount > 0 && (
+                                <Text style={styles.modalText}>Discount: -₱{selectedTransaction.discount.toFixed(2)}</Text>
                             )}
-                            <Text style={styles.modalTotal}>Total: {selectedTransaction.currency}{selectedTransaction.total.toFixed(2)}</Text>
+                            <Text style={styles.modalTotal}>Total: ₱{selectedTransaction.total.toFixed(2)}</Text>
                         </>
                     )}
                     <TouchableOpacity
@@ -191,7 +181,7 @@ const TransactionsScreen = () => {
       <FlatList
         data={filteredTransactions}
         renderItem={renderTransaction}
-        keyExtractor={item => item.id}
+        keyExtractor={item => item.id.toString()}
         ListEmptyComponent={<Text style={styles.emptyText}>No transactions found.</Text>}
       />
     </View>

@@ -1,14 +1,12 @@
 import { Ionicons } from '@expo/vector-icons';
 import { Stack, useRouter } from 'expo-router';
-import { signOut } from 'firebase/auth';
 import React, { createContext, useContext, useState } from 'react';
 import { Alert, TouchableOpacity } from 'react-native';
-import { auth } from '../../firebase';
 
 // --- Staff Context for Global State ---
 
 interface Staff {
-    id: string;
+    id: number;
     name: string;
     pin: string;
 }
@@ -42,16 +40,6 @@ const StaffProvider = ({ children }: { children: React.ReactNode }) => {
 
 const MainLayout = () => {
     const router = useRouter();
-
-    const handleKitchenLogout = async () => {
-        try {
-            await signOut(auth);
-            router.replace('/(auth)/login');
-        } catch (error) {
-            console.error("Logout Error:", error);
-            Alert.alert("Logout Failed", "An error occurred while logging out.");
-        }
-    };
 
     return (
         <Stack>

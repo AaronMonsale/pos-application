@@ -4,7 +4,8 @@ datasource db {
 }
 
 generator client {
-  provider = "prisma-client-js"
+  provider      = "prisma-client-js"
+  binaryTargets = ["native", "rhel-openssl-3.0.x"]
 }
 
 model User {
@@ -14,4 +15,111 @@ model User {
   role      String   @default("USER")
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+  name      String?
+  pin       String?
+  deletedAt DateTime? @db.Timestamp(6)
+}
+
+model Category {
+  id        Int      @id @default(autoincrement())
+  name      String
+  foods     Food[]
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  deletedAt DateTime? @db.Timestamp(6)
+  discounts Discount[]
+}
+
+model Food {
+  id          Int      @id @default(autoincrement())
+  name        String
+  price       Float
+  description String
+  categoryId  Int
+  category    Category @relation(fields: [categoryId], references: [id])
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  deletedAt   DateTime? @db.Timestamp(6)
+  discounts   Discount[]
+  orderItems  OrderItem[]
+}
+
+model Discount {
+    id             Int        @id @default(autoincrement())
+    name           String
+    percent        Float
+    type           String // "Entire Order", "Category", "Food"
+    startDate      DateTime
+    expirationDate DateTime
+    categories     Category[]
+    foods          Food[]
+    createdAt      DateTime   @default(now())
+    updatedAt      DateTime   @updatedAt
+}
+
+model Table {
+    id            Int       @id @default(autoincrement())
+    name          String
+    occupied      Boolean   @default(false)
+    occupiedBy    String?
+    staffId       Int?
+    order         Order?
+    status        String    @default("available") // available, serving, occupied
+    kitchenStatus String? // pending, preparing, ready
+    createdAt     DateTime  @default(now())
+    updatedAt     DateTime  @updatedAt
+    deletedAt     DateTime? @db.Timestamp(6)
+}
+
+model Order {
+    id            Int         @id @default(autoincrement())
+    tableId       Int         @unique
+    table         Table       @relation(fields: [tableId], references: [id])
+    items         OrderItem[]
+    status        String      @default("pending") // pending, completed
+    createdAt     DateTime    @default(now())
+    updatedAt     DateTime    @updatedAt
+    orderPlacedAt DateTime?
+}
+
+model OrderItem {
+    id        Int     @id @default(autoincrement())
+    orderId   Int
+    order     Order   @relation(fields: [orderId], references: [id])
+    foodId    Int
+    food      Food    @relation(fields: [foodId], references: [id])
+    quantity  Int
+    discount  Float?
+    note      String?
+    createdAt DateTime @default(now())
+    updatedAt DateTime @updatedAt
+}
+
+model Transaction {
+    id            Int               @id @default(autoincrement())
+    items         TransactionItem[]
+    subtotal      Float
+    tax           Float
+    serviceCharge Float
+    discount      Float
+    total         Float
+    createdAt     DateTime          @default(now())
+    staffId       Int?
+    staffName     String?
+    tableId       Int?
+    tableName     String?
+    status        String            @default("completed")
+}
+
+model TransactionItem {
+    id          Int         @id @default(autoincrement())
+    transactionId Int
+    transaction Transaction @relation(fields: [transactionId], references: [id])
+    foodId      Int
+    name        String
+    price       Float
+    quantity    Int
+    discount    Float
+    note        String
+    total       Float
 }

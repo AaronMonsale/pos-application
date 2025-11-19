@@ -1,10 +1,10 @@
 
 import { View, Text, TextInput, Button, Alert, StyleSheet } from "react-native";
 import React, { useState, useEffect } from "react";
-import { createUserWithEmailAndPassword } from "firebase/auth";
-import { auth, db } from "../../firebase";
-import { doc, setDoc, getDocs, collection } from "firebase/firestore";
 import { useRouter } from "expo-router";
+import { PrismaClient } from "@prisma/client";
+
+const prisma = new PrismaClient();
 
 const Register = () => {
   const [email, setEmail] = useState("");
@@ -14,9 +14,8 @@ const Register = () => {
 
   useEffect(() => {
     const checkRegistrationStatus = async () => {
-      const usersCollection = collection(db, "users");
-      const usersSnapshot = await getDocs(usersCollection);
-      if (usersSnapshot.empty) {
+      const userCount = await prisma.user.count();
+      if (userCount === 0) {
         setIsRegistrationOpen(true);
       } else {
         setIsRegistrationOpen(false);
@@ -33,18 +32,12 @@ const Register = () => {
     }
 
     try {
-      const userCredential = await createUserWithEmailAndPassword(
-        auth,
-        email,
-        password
-      );
-      const user = userCredential.user;
-
-      // Add user role to Firestore
-      await setDoc(doc(db, "users", user.uid), {
-        email: user.email,
-        role: "admin", // The first user is always an admin
-        deletedAt: null,
+      await prisma.user.create({
+        data: {
+          email,
+          password, // Storing password in plain text, consider hashing in a real application
+          role: "ADMIN",
+        },
       });
 
       Alert.alert("Success", "Admin registered successfully!");

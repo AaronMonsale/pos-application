@@ -1,21 +1,17 @@
 import { Ionicons } from '@expo/vector-icons';
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import { addDoc, collection, doc, getDoc, getDocs, onSnapshot, serverTimestamp, Timestamp, updateDoc } from "firebase/firestore";
+import { PrismaClient, Food, Category, Discount, User as Staff, Prisma } from '@prisma/client';
 import React, { useEffect, useState } from 'react';
 import { Alert, FlatList, Modal, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, TouchableWithoutFeedback, useWindowDimensions, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Colors } from '../../constants/theme';
-import { db } from '../../firebase';
-import { useStaff } from './_layout'; // Import the new hook
+import { useStaff } from './_layout';
 
-// --- Interfaces ---
-interface Food { id: string; name: string; price: number; description: string; categoryId: string; }
-interface OrderItemType { id: string; food: Food; quantity: number; discount?: number | null; note?: string; }
-interface Category { id: string; name: string; foods: Food[]; }
-interface Discount { id: string; name: string; percent: number; type: string; startDate: Timestamp; expirationDate: Timestamp; categories?: string[]; foods?: string[]; }
-interface Staff { id: string; name: string; pin: string; }
+const prisma = new PrismaClient();
 
-// --- Sub-components ---
+interface OrderItemType { id: string; food: Food; quantity: number; discount?: number | null; note?: string | null; }
+interface CategoryWithFoods extends Category { foods: Food[]; }
+
 const OrderItem = ({ item, onRemove, onIncrement, onDecrement, onPress }: { item: OrderItemType, onRemove: () => void, onIncrement: () => void, onDecrement: () => void, onPress: () => void }) => (
     <TouchableOpacity onPress={onPress}>
         <View style={styles.orderItem}>
@@ -35,18 +31,16 @@ const OrderItem = ({ item, onRemove, onIncrement, onDecrement, onPress }: { item
     </TouchableOpacity>
 );
 
-// --- Main Component ---
 const PosScreen = () => {
   const router = useRouter();
   const params = useLocalSearchParams();
   const { tableId, tableName } = params as { tableId: string; tableName: string; };
   const { width, height } = useWindowDimensions();
   const isLandscape = width > height;
-
-  // --- Global and Local State ---
-  const { currentStaff, setCurrentStaff } = useStaff(); // Use global staff state
-  const [categories, setCategories] = useState<Category[]>([]);
-  const [selectedCategory, setSelectedCategory] = useState<Category | null>(null);
+  const { currentStaff, setCurrentStaff } = useStaff();
+  
+  const [categories, setCategories] = useState<CategoryWithFoods[]>([]);
+  const [selectedCategory, setSelectedCategory] = useState<CategoryWithFoods | null>(null);
   const [isModalVisible, setIsModalVisible] = useState(false);
   const [isDiscountModalVisible, setIsDiscountModalVisible] = useState(false);
   const [orderItems, setOrderItems] = useState<OrderItemType[]>([]);
@@ -54,8 +48,8 @@ const PosScreen = () => {
   const [tax, setTax] = useState(0);
   const [serviceCharge, setServiceCharge] = useState(0);
   const [total, setTotal] = useState(0);
-  const [discounts, setDiscounts] = useState<Discount[]>([]);
-  const [appliedDiscount, setAppliedDiscount] = useState<Discount | null>(null);
+  const [discounts, setDiscounts] = useState<Prisma.DiscountGetPayload<{ include: { foods: true, categories: true } }>[]>([]);
+  const [appliedDiscount, setAppliedDiscount] = useState<Prisma.DiscountGetPayload<{ include: { foods: true, categories: true } }> | null>(null);
   const [discountAmount, setDiscountAmount] = useState(0);
   const [isDropdownVisible, setIsDropdownVisible] = useState(false);
   const [isItemEditorVisible, setIsItemEditorVisible] = useState(false);
@@ -71,65 +65,50 @@ const PosScreen = () => {
   const [enteredPin, setEnteredPin] = useState('');
 
   const isSystemLocked = !currentStaff;
-  
-  const handleBack = () => {
-    router.back();
-  }
+
+  const handleBack = () => router.back();
 
   useEffect(() => {
-    const fetchStaticData = async () => {
+    const fetchInitialData = async () => {
         try {
-            const categoriesSnapshot = await getDocs(collection(db, 'categories'));
-            const categoriesList = categoriesSnapshot.docs.map(doc => ({ id: doc.id, name: doc.data().name, foods: [] })) as Category[];
+            const [categoriesList, activeDiscounts, allStaff] = await Promise.all([
+                prisma.category.findMany({ include: { foods: true } }),
+                prisma.discount.findMany({ where: { startDate: { lte: new Date() }, expirationDate: { gte: new Date() } }, include: { foods: true, categories: true } }),
+                prisma.user.findMany({ where: { role: 'USER' } })
+            ]);
             setCategories(categoriesList);
-
-            const discountsSnapshot = await getDocs(collection(db, 'discounts'));
-            const allDiscounts = discountsSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })) as Discount[];
-            const activeDiscounts = allDiscounts.filter(d => new Date() >= d.startDate.toDate() && new Date() <= d.expirationDate.toDate());
             setDiscounts(activeDiscounts);
-
-            const staffSnapshot = await getDocs(collection(db, 'staff'));
-            const allStaff = staffSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Staff));
             setStaffList(allStaff);
-
         } catch (error) {
-            console.error("Failed to fetch static data:", error);
+            console.error("Failed to fetch initial data:", error);
             Alert.alert("Error", "Failed to load essential page data.");
         }
     };
-    fetchStaticData();
+    fetchInitialData();
   }, []);
 
   useEffect(() => {
     if (!tableId) return;
-
-    const tableDocRef = doc(db, 'tables', tableId);
-    
-    const unsubscribe = onSnapshot(tableDocRef, (docSnap) => {
-        if (docSnap.exists()) {
-            const tableData = docSnap.data();
-            setIsTableOccupied(tableData.occupied || false);
-            setOccupiedBy(tableData.occupiedBy || null);
-            
-            const orderFromDb = (tableData.order || []).map((item: any, index: number) => ({
-                ...item,
-                id: `${item.food.id}-${Date.now()}-${index}`
-            }));
-
-            if (JSON.stringify(orderFromDb) !== JSON.stringify(orderItems)) {
-                setOrderItems(orderFromDb);
-            }
+    const fetchTableData = async () => {
+      try {
+        const table = await prisma.table.findUnique({ where: { id: parseInt(tableId) }, include: { order: { include: { items: { include: { food: true } } } } } });
+        if (table) {
+          setIsTableOccupied(table.occupied);
+          setOccupiedBy(table.occupiedBy);
+          const orderFromDb = table.order?.items.map((item, index) => ({ ...item, id: `${item.food.id}-${Date.now()}-${index}`, food: item.food, discount: item.discount, note: item.note })) || [];
+          setOrderItems(orderFromDb);
         } else {
-            console.error("Table document not found!");
-            Alert.alert("Error", "Could not find the specified table.", [{ text: "OK", onPress: () => router.back() }]);
+          Alert.alert("Error", "Table not found.", [{ text: "OK", onPress: () => router.back() }]);
         }
-    }, (error) => {
-        console.error("Failed to listen to table changes:", error);
-        Alert.alert("Error", "Lost connection to the table data.");
-    });
+      } catch (error) {
+        console.error("Failed to fetch table data:", error);
+      }
+    };
 
-    return () => unsubscribe();
-  }, [tableId]);
+    fetchTableData();
+    const interval = setInterval(fetchTableData, 5000); // Polling every 5 seconds
+    return () => clearInterval(interval);
+  }, [tableId, router]);
 
   useEffect(() => {
     const newSubtotal = orderItems.reduce((acc, item) => acc + (item.food.price * item.quantity), 0);
@@ -137,7 +116,9 @@ const PosScreen = () => {
     let totalDiscountFromGlobal = 0;
     if (appliedDiscount) {
         const subtotalForGlobalDiscount = orderItems.reduce((acc, item) => {
-            if ( (appliedDiscount.type === 'Entire Order') || (appliedDiscount.type === 'Category' && appliedDiscount.categories?.includes(item.food.categoryId)) || (appliedDiscount.type === 'Food' && appliedDiscount.foods?.includes(item.food.id)) ) {
+            const foodInDiscount = appliedDiscount.foods.some(f => f.id === item.food.id);
+            const categoryInDiscount = appliedDiscount.categories.some(c => c.id === item.food.categoryId);
+            if ( (appliedDiscount.type === 'Entire Order') || (appliedDiscount.type === 'Category' && categoryInDiscount) || (appliedDiscount.type === 'Food' && foodInDiscount) ) {
                 return acc + (item.food.price * item.quantity * (1 - (item.discount || 0) / 100));
             } return acc; }, 0);
         totalDiscountFromGlobal = subtotalForGlobalDiscount * (appliedDiscount.percent / 100);
@@ -151,148 +132,71 @@ const PosScreen = () => {
   }, [orderItems, appliedDiscount]);
 
   const handleSaveOrder = async () => {
-    if (!currentStaff) {
-      Alert.alert("Login Required", "Please log in before saving an order.");
-      return;
-    }
-    
-    if (orderItems.length === 0) {
-      try {
-        const tableDoc = doc(db, 'tables', tableId);
-        await updateDoc(tableDoc, { occupied: false, occupiedBy: null, staffId: null, order: [], status: 'available', kitchenStatus: null });
-        Alert.alert("Table Cleared", `${tableName} is now available.`, [{ text: "OK", onPress: () => router.replace('/(main)/tables') }]);
-      } catch (error) {
-        console.error("Error clearing order: ", error);
-        Alert.alert("Error", "Could not clear the order from the table.");
-      }
-      return;
-    }
-
+    if (!currentStaff) return Alert.alert("Login Required", "Please log in to save an order.");
     try {
-      const tableDocRef = doc(db, 'tables', tableId);
-      const tableDocSnap = await getDoc(tableDocRef);
-      const currentStatus = tableDocSnap.exists() ? tableDocSnap.data().status : null;
+        const orderCreateData = {
+            items: { create: orderItems.map(i => ({ foodId: i.food.id, quantity: i.quantity, discount: i.discount, note: i.note })) },
+            orderPlacedAt: new Date(),
+        };
 
-      const orderToSave = orderItems.map(item => ({ food: { id: item.food.id, name: item.food.name, price: item.food.price }, quantity: item.quantity, discount: item.discount || null, note: item.note || '' }));
-      
-      const updateData: any = {
-        occupied: true,
-        occupiedBy: currentStaff.name,
-        staffId: currentStaff.id,
-        order: orderToSave,
-        status: 'serving', 
-        kitchenStatus: 'pending', 
-      };
+        const orderUpdateData = {
+            items: {
+                deleteMany: {},
+                create: orderItems.map(i => ({ foodId: i.food.id, quantity: i.quantity, discount: i.discount, note: i.note })),
+            },
+            orderPlacedAt: new Date(),
+        };
 
-      if (currentStatus !== 'serving') {
-        updateData.orderPlacedAt = serverTimestamp();
-      }
-      
-      await updateDoc(tableDocRef, updateData);
-      router.replace({ pathname: '/(main)/pending-order', params: { tableId, tableName } });
+        await prisma.table.update({
+            where: { id: parseInt(tableId) },
+            data: {
+                occupied: orderItems.length > 0,
+                occupiedBy: orderItems.length > 0 ? currentStaff.name : null,
+                staffId: orderItems.length > 0 ? currentStaff.id : null,
+                order: { upsert: { create: orderCreateData, update: orderUpdateData } },
+                status: orderItems.length > 0 ? 'serving' : 'available',
+                kitchenStatus: orderItems.length > 0 ? 'pending' : null,
+            },
+        });
 
+        if (orderItems.length > 0) {
+            router.replace({ pathname: '/(main)/pending-order', params: { tableId, tableName } });
+        } else {
+            Alert.alert("Table Cleared", `${tableName} is now available.`, [{ text: "OK", onPress: () => router.replace('/(main)/tables') }]);
+        }
     } catch (error) {
-      console.error("Error saving order: ", error);
-      Alert.alert("Error", "Could not save the order to the table.");
+        console.error("Error saving order:", error);
+        Alert.alert("Error", "Could not save the order.");
     }
-  };
+};
 
   const handlePay = async () => {
     if (orderItems.length === 0) return Alert.alert("Empty Order", "Cannot process an empty order.");
     try {
-        const transactionItems = orderItems.map(item => ({ id: item.food.id, name: item.food.name, price: item.food.price, quantity: item.quantity, discount: item.discount || 0, note: item.note || '', total: item.food.price * item.quantity * (1 - (item.discount || 0) / 100) }));
-        await addDoc(collection(db, "transactions"), { items: transactionItems, subtotal, tax, serviceCharge, discount: discountAmount, total, createdAt: serverTimestamp(), staffId: currentStaff?.id || null, staffName: currentStaff?.name || null, tableId: tableId || null, tableName: tableName || null, status: 'completed' });
-        if (tableId) {
-            await updateDoc(doc(db, 'tables', tableId), { occupied: false, occupiedBy: null, staffId: null, order: [], status: 'available', kitchenStatus: null });
-        }
-        router.replace({ pathname: '/(main)/summary', params: { items: JSON.stringify(transactionItems), subtotal: subtotal.toString(), tax: tax.toString(), serviceCharge: serviceCharge.toString(), discount: discountAmount.toString(), total: total.toString(), staffName: currentStaff?.name || 'N/A', tableName: tableName || 'N/A' } });
-    } catch (error) { 
-        console.error("Error processing payment: ", error); 
-        Alert.alert("Payment Error", "There was an error processing the payment."); 
-    }
+        const transaction = await prisma.transaction.create({ data: { subtotal, tax, serviceCharge, discount: discountAmount, total, staffId: currentStaff?.id, staffName: currentStaff?.name, tableId: parseInt(tableId), tableName, status: 'completed', items: { create: orderItems.map(i => ({ foodId: i.food.id, name: i.food.name, price: i.food.price, quantity: i.quantity, discount: i.discount || 0, note: i.note || '', total: i.food.price * i.quantity * (1 - (i.discount || 0) / 100) })) } } });
+        await prisma.table.update({ where: { id: parseInt(tableId) }, data: { occupied: false, occupiedBy: null, staffId: null, order: { delete: true }, status: 'available', kitchenStatus: null }});
+        router.replace({ pathname: '/(main)/summary', params: { transactionId: transaction.id.toString() } });
+    } catch (error) { console.error("Error processing payment:", error); Alert.alert("Payment Error", "There was an error processing the payment."); }
   };
 
-  const handleCategoryPress = async (category: Category) => {
-      if (isSystemLocked) return;
-      const foodsSnapshot = await getDocs(collection(doc(db, 'categories', category.id), 'foods'));
-      const foodsList = foodsSnapshot.docs.map(foodDoc => ({ id: foodDoc.id, ...foodDoc.data(), categoryId: category.id } as Food));
-      setSelectedCategory({ ...category, foods: foodsList });
-      setIsModalVisible(true);
-  };
-  
-  const addToOrder = (food: Food) => {
-      const existingItem = orderItems.find(item => item.food.id === food.id && !item.discount);
-      if (existingItem) {
-          incrementQuantity(existingItem.id);
-      } else {
-          setOrderItems(prevItems => [...prevItems, { id: `${food.id}-${Date.now()}`, food, quantity: 1, discount: null, note: '' }]);
-      }
-  };
-
-  const incrementQuantity = (itemId: string) => { setOrderItems(prevItems => prevItems.map(item => item.id === itemId ? { ...item, quantity: item.quantity + 1 } : item)); };
-  const decrementQuantity = (itemId: string) => { setOrderItems(prevItems => { const existingItem = prevItems.find(item => item.id === itemId); if (existingItem && existingItem.quantity > 1) { return prevItems.map(item => item.id === itemId ? { ...item, quantity: item.quantity - 1 } : item); } else { return prevItems.filter(item => item.id !== itemId); } }); };
-  const removeItem = (itemId: string) => { setOrderItems(prevItems => prevItems.filter(item => item.id !== itemId)); };
+  const handleCategoryPress = (category: CategoryWithFoods) => { if (!isSystemLocked) { setSelectedCategory(category); setIsModalVisible(true); } };
+  const addToOrder = (food: Food) => { const existing = orderItems.find(i => i.food.id === food.id && !i.discount); if (existing) incrementQuantity(existing.id); else setOrderItems(prev => [...prev, { id: `${food.id}-${Date.now()}`, food, quantity: 1 }]); };
+  const incrementQuantity = (itemId: string) => setOrderItems(prev => prev.map(i => i.id === itemId ? { ...i, quantity: i.quantity + 1 } : i));
+  const decrementQuantity = (itemId: string) => setOrderItems(prev => { const item = prev.find(i => i.id === itemId); return item && item.quantity > 1 ? prev.map(i => i.id === itemId ? { ...i, quantity: i.quantity - 1 } : i) : prev.filter(i => i.id !== itemId); });
+  const removeItem = (itemId: string) => setOrderItems(prev => prev.filter(i => i.id !== itemId));
   const openItemEditor = (item: OrderItemType) => { setSelectedOrderItem(item); setEditQuantity(item.quantity.toString()); setEditDiscount(item.discount?.toString() || ''); setEditNote(item.note || ''); setIsItemEditorVisible(true); };
-  const handleUpdateItem = () => { if (selectedOrderItem) { const qty = parseInt(editQuantity, 10); const disc = parseFloat(editDiscount); setOrderItems(prevItems => prevItems.map(item => item.id === selectedOrderItem.id ? { ...item, quantity: !isNaN(qty) && qty > 0 ? qty : item.quantity, discount: !isNaN(disc) && disc > 0 ? disc : null, note: editNote, } : item )); closeItemEditor(); } };
+  const handleUpdateItem = () => { if (selectedOrderItem) { const qty = parseInt(editQuantity, 10); const disc = parseFloat(editDiscount); setOrderItems(prev => prev.map(i => i.id === selectedOrderItem.id ? { ...i, quantity: !isNaN(qty) && qty > 0 ? qty : i.quantity, discount: !isNaN(disc) && disc >= 0 ? disc : null, note: editNote } : i)); closeItemEditor(); } };
   const closeItemEditor = () => { setIsItemEditorVisible(false); setSelectedOrderItem(null); setEditQuantity(''); setEditDiscount(''); setEditNote(''); };
-  const applyDiscount = (discount: Discount) => { setAppliedDiscount(discount); setIsDiscountModalVisible(false); }
-  
-  const handleStaffSelect = (staff: Staff) => {
-    setSelectedStaffForLogin(staff);
-    setIsDropdownVisible(false);
-    setIsPinModalVisible(true);
-  };
-
-  const handlePinLogin = () => {
-    if (enteredPin === selectedStaffForLogin?.pin) {
-      setCurrentStaff(selectedStaffForLogin);
-      setIsPinModalVisible(false);
-      setEnteredPin('');
-    } else {
-      Alert.alert("Invalid PIN", "The PIN you entered is incorrect.");
-      setEnteredPin('');
-    }
-  };
-
-  const handleLogout = ()=>
-  {
-    if (orderItems.length > 0) {
-      Alert.alert( "Unsaved Order", "There are items in the current order. Please save or clear it before logging out.", [{ text: "Cancel", style: "cancel" }, { text: "Save Order", onPress: handleSaveOrder }, { text: "Logout Anyway", style: "destructive", onPress: () => setCurrentStaff(null) }] );
-    } else {
-      setCurrentStaff(null);
-    }
-    setIsDropdownVisible(false);
-  };
-
-  const renderFoodItem = ({ item }: { item: Food }) => (
-    <TouchableOpacity onPress={() => { addToOrder(item); setIsModalVisible(false); }}>
-        <View style={styles.foodItemContainer}>
-            <Text style={styles.foodItemName}>{item.name}</Text>
-            <Text style={styles.foodItemPrice}>{`₱${item.price.toFixed(2)}`}</Text>
-            <Text style={styles.foodItemDescription}>{item.description}</Text>
-        </View>
-    </TouchableOpacity>
-  );
-
-  const renderDiscountItem = ({ item }: { item: Discount }) => (
-    <TouchableOpacity onPress={() => applyDiscount(item)}>
-        <View style={styles.foodItemContainer}>
-            <Text style={styles.foodItemName}>{item.name}</Text>
-            <Text>{`${item.percent}% - ${item.type}`}</Text>
-        </View>
-    </TouchableOpacity>
-  );
+  const applyDiscount = (discount: Prisma.DiscountGetPayload<{ include: { foods: true, categories: true } }>) => { setAppliedDiscount(discount); setIsDiscountModalVisible(false); };
+  const handleStaffSelect = (staff: Staff) => { setSelectedStaffForLogin(staff); setIsDropdownVisible(false); setIsPinModalVisible(true); };
+  const handlePinLogin = () => { if (selectedStaffForLogin && selectedStaffForLogin.pin && selectedStaffForLogin.name && enteredPin === selectedStaffForLogin.pin) { setCurrentStaff({ id: selectedStaffForLogin.id, name: selectedStaffForLogin.name, pin: selectedStaffForLogin.pin, }); setIsPinModalVisible(false); setEnteredPin(''); } else { Alert.alert("Invalid PIN", "The PIN is incorrect."); setEnteredPin(''); } };
+  const handleLogout = () => { if (orderItems.length > 0) Alert.alert("Unsaved Order", "There are items in the order. Please save or clear it before logging out.", [{ text: "Cancel" }, { text: "Save Order", onPress: handleSaveOrder }, { text: "Logout Anyway", style: "destructive", onPress: () => setCurrentStaff(null) }]); else setCurrentStaff(null); setIsDropdownVisible(false); };
 
   const mainContent = (
       <View style={[styles.mainContent, isSystemLocked && styles.disabledView]}>
           <View style={styles.categoriesGrid}>
               {categories.map((category) => (
-                  <TouchableOpacity
-                      key={category.id}
-                      style={styles.categoryTile}
-                      onPress={() => handleCategoryPress(category)}
-                      disabled={isSystemLocked}
-                  >
+                  <TouchableOpacity key={category.id} style={styles.categoryTile} onPress={() => handleCategoryPress(category)} disabled={isSystemLocked}>
                       <Text style={styles.categoryText}>{category.name}</Text>
                   </TouchableOpacity>
               ))}
@@ -303,305 +207,78 @@ const PosScreen = () => {
   const orderSidebar = (
     <View style={[styles.orderContainer, isSystemLocked && styles.disabledView]}>
         <Text style={styles.orderTitle}>{`Order: ${tableName}`}</Text>
-        <ScrollView>
-            {orderItems.map((item) => (
-                <OrderItem
-                    key={item.id}
-                    item={item}
-                    onPress={() => openItemEditor(item)}
-                    onRemove={() => removeItem(item.id)}
-                    onIncrement={() => incrementQuantity(item.id)}
-                    onDecrement={() => decrementQuantity(item.id)}
-                />
-            ))}
-        </ScrollView>
+        <ScrollView>{orderItems.map((item) => <OrderItem key={item.id} item={item} onPress={() => openItemEditor(item)} onRemove={() => removeItem(item.id)} onIncrement={() => incrementQuantity(item.id)} onDecrement={() => decrementQuantity(item.id)} />)}</ScrollView>
         <View style={styles.summaryContainer}>
-            <View style={styles.summaryRow}>
-                <Text>Subtotal</Text>
-                <Text>{`₱${subtotal.toFixed(2)}`}</Text>
-            </View>
-            <View style={styles.summaryRow}>
-                <Text>Tax</Text>
-                <Text>{`₱${tax.toFixed(2)}`}</Text>
-            </View>
-            <View style={styles.summaryRow}>
-                <Text>Service Charge</Text>
-                <Text>{`₱${serviceCharge.toFixed(2)}`}</Text>
-            </View>
-            {discountAmount > 0 && (
-                <View style={styles.summaryRow}>
-                    <TouchableOpacity onPress={() => setAppliedDiscount(null)}>
-                        <Text style={{ color: 'red' }}>
-                            {`Discount ${appliedDiscount ? `(${appliedDiscount.name})` : ''}`}
-                        </Text>
-                    </TouchableOpacity>
-                    <Text style={{ color: 'red' }}>{`-₱${discountAmount.toFixed(2)}`}</Text>
-                </View>
-            )}
-            <View style={styles.summaryRowTotal}>
-                <Text style={styles.totalText}>TOTAL</Text>
-                <Text style={styles.totalText}>{`₱${total.toFixed(2)}`}</Text>
-            </View>
+            <View style={styles.summaryRow}><Text>Subtotal</Text><Text>{`₱${subtotal.toFixed(2)}`}</Text></View>
+            <View style={styles.summaryRow}><Text>Tax</Text><Text>{`₱${tax.toFixed(2)}`}</Text></View>
+            <View style={styles.summaryRow}><Text>Service Charge</Text><Text>{`₱${serviceCharge.toFixed(2)}`}</Text></View>
+            {discountAmount > 0 && <View style={styles.summaryRow}><TouchableOpacity onPress={() => setAppliedDiscount(null)}><Text style={{ color: 'red' }}>{`Discount ${appliedDiscount ? `(${appliedDiscount.name})` : ''}`}</Text></TouchableOpacity><Text style={{ color: 'red' }}>{`-₱${discountAmount.toFixed(2)}`}</Text></View>}
+            <View style={styles.summaryRowTotal}><Text style={styles.totalText}>TOTAL</Text><Text style={styles.totalText}>{`₱${total.toFixed(2)}`}</Text></View>
         </View>
         <View style={styles.actionButtonsContainer}>
-            <TouchableOpacity
-                style={[styles.actionButton, styles.occupyButton, isSystemLocked && styles.disabledButton]}
-                onPress={handleSaveOrder}
-                disabled={isSystemLocked}
-            >
-                <Text style={styles.actionButtonText}>SAVE ORDER</Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-                style={[styles.actionButton, isSystemLocked && styles.disabledButton]}
-                onPress={() => { setOrderItems([]); setAppliedDiscount(null); }}
-                disabled={isSystemLocked}
-            >
-                <Text style={styles.actionButtonText}>CLEAR</Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-                style={[styles.actionButton, isSystemLocked && styles.disabledButton]}
-                onPress={() => setIsDiscountModalVisible(true)}
-                disabled={isSystemLocked}
-            >
-                <Text style={styles.actionButtonText}>DISCOUNT</Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-                style={[styles.actionButton, styles.payButton, (isSystemLocked || orderItems.length === 0) && styles.disabledButton]}
-                onPress={handlePay}
-                disabled={isSystemLocked || orderItems.length === 0}
-            >
-                <Text style={styles.payButtonText}>PAY</Text>
-            </TouchableOpacity>
+            <TouchableOpacity style={[styles.actionButton, styles.occupyButton, isSystemLocked && styles.disabledButton]} onPress={handleSaveOrder} disabled={isSystemLocked}><Text style={styles.actionButtonText}>SAVE ORDER</Text></TouchableOpacity>
+            <TouchableOpacity style={[styles.actionButton, isSystemLocked && styles.disabledButton]} onPress={() => { setOrderItems([]); setAppliedDiscount(null); }} disabled={isSystemLocked}><Text style={styles.actionButtonText}>CLEAR</Text></TouchableOpacity>
+            <TouchableOpacity style={[styles.actionButton, isSystemLocked && styles.disabledButton]} onPress={() => setIsDiscountModalVisible(true)} disabled={isSystemLocked}><Text style={styles.actionButtonText}>DISCOUNT</Text></TouchableOpacity>
+            <TouchableOpacity style={[styles.actionButton, styles.payButton, (isSystemLocked || orderItems.length === 0) && styles.disabledButton]} onPress={handlePay} disabled={isSystemLocked || orderItems.length === 0}><Text style={styles.payButtonText}>PAY</Text></TouchableOpacity>
         </View>
     </View>
   );
 
   const renderPinModal = () => (
-    <Modal
-        visible={isPinModalVisible}
-        transparent={true}
-        animationType="fade"
-        onRequestClose={() => setIsPinModalVisible(false)}
-    >
-        <View style={styles.modalOverlay}>
-            <View style={styles.pinModalContent}>
-                <Text style={styles.modalTitle}>{`Enter PIN for ${selectedStaffForLogin?.name}`}</Text>
-                <TextInput
-                    style={styles.pinInput}
-                    value={enteredPin}
-                    onChangeText={setEnteredPin}
-                    keyboardType="number-pad"
-                    maxLength={4}
-                    secureTextEntry
-                    autoFocus={true}
-                />
-                <View style={styles.modalActions}>
-                    <TouchableOpacity
-                        style={[styles.button, styles.buttonCancel]}
-                        onPress={() => { setIsPinModalVisible(false); setEnteredPin(''); }}
-                    >
-                        <Text style={styles.buttonText}>Cancel</Text>
-                    </TouchableOpacity>
-                    <TouchableOpacity style={[styles.button, styles.buttonSave]} onPress={handlePinLogin}>
-                        <Text style={styles.buttonText}>Login</Text>
-                    </TouchableOpacity>
-                </View>
+    <Modal visible={isPinModalVisible} transparent={true} animationType="fade" onRequestClose={() => setIsPinModalVisible(false)}>
+        <View style={styles.modalOverlay}><View style={styles.pinModalContent}>
+            <Text style={styles.modalTitle}>{`Enter PIN for ${selectedStaffForLogin?.name}`}</Text>
+            <TextInput style={styles.pinInput} value={enteredPin} onChangeText={setEnteredPin} keyboardType="number-pad" maxLength={4} secureTextEntry autoFocus={true} />
+            <View style={styles.modalActions}>
+                <TouchableOpacity style={[styles.button, styles.buttonCancel]} onPress={() => { setIsPinModalVisible(false); setEnteredPin(''); }}><Text style={styles.buttonText}>Cancel</Text></TouchableOpacity>
+                <TouchableOpacity style={[styles.button, styles.buttonSave]} onPress={handlePinLogin}><Text style={styles.buttonText}>Login</Text></TouchableOpacity>
             </View>
-        </View>
+        </View></View>
     </Modal>
   );
 
-  const applicableDiscounts = selectedOrderItem
-    ? discounts.filter(d =>
-        (d.type === 'Food' && d.foods?.includes(selectedOrderItem.food.id)) ||
-        (d.type === 'Category' && d.categories?.includes(selectedOrderItem.food.categoryId))
-      )
-    : [];
-  
   return (
       <SafeAreaView style={styles.container}>
           {renderPinModal()}
-          <Modal
-              visible={isItemEditorVisible}
-              transparent={true}
-              animationType="fade"
-              onRequestClose={closeItemEditor}
-          >
-              <View style={styles.modalOverlay}>
-                  <View style={styles.pinModalContent}>
-                      <Text style={styles.modalTitle}>{`Edit Item: ${selectedOrderItem?.food.name}`}</Text>
-                      <Text style={styles.inputLabel}>Quantity</Text>
-                      <TextInput
-                          style={styles.pinInput}
-                          value={editQuantity}
-                          onChangeText={setEditQuantity}
-                          keyboardType="number-pad"
-                          autoFocus={true}
-                      />
-                      <Text style={styles.inputLabel}>Discount (%)</Text>
-                      <TextInput
-                          style={styles.pinInput}
-                          value={editDiscount}
-                          onChangeText={setEditDiscount}
-                          keyboardType="decimal-pad"
-                          placeholder="Enter discount percentage"
-                      />
-                      <Text style={styles.inputLabel}>Or Select Preset</Text>
-                      <View style={styles.pickerContainer}>
-                          <TouchableOpacity
-                              style={styles.picker}
-                              onPress={() => {
-                                  Alert.alert(
-                                      'Select Discount',
-                                      'Choose a preset option',
-                                      [
-                                          { text: 'No Discount', onPress: () => setEditDiscount('') },
-                                          ...applicableDiscounts.map(d => ({
-                                              text: `${d.name} (${d.percent}%)`,
-                                              onPress: () => setEditDiscount(d.percent.toString()),
-                                          })),
-                                      ],
-                                      { cancelable: true }
-                                  );
-                              }}
-                          >
-                              <Text style={styles.pickerText}>Select a preset discount...</Text>
-                          </TouchableOpacity>
-                      </View>
-                      <Text style={styles.inputLabel}>Note</Text>
-                      <TextInput style={styles.pinInput} value={editNote} onChangeText={setEditNote} />
-                      <View style={styles.modalActions}>
-                          <TouchableOpacity style={[styles.button, styles.buttonCancel]} onPress={closeItemEditor}>
-                              <Text style={styles.buttonText}>Cancel</Text>
-                          </TouchableOpacity>
-                          <TouchableOpacity style={[styles.button, styles.buttonSave]} onPress={handleUpdateItem}>
-                              <Text style={styles.buttonText}>Update</Text>
-                          </TouchableOpacity>
-                      </View>
-                  </View>
+          <Modal visible={isItemEditorVisible} transparent={true} animationType="fade" onRequestClose={closeItemEditor}><View style={styles.modalOverlay}><View style={styles.pinModalContent}>
+              <Text style={styles.modalTitle}>{`Edit Item: ${selectedOrderItem?.food.name}`}</Text>
+              <Text style={styles.inputLabel}>Quantity</Text>
+              <TextInput style={styles.pinInput} value={editQuantity} onChangeText={setEditQuantity} keyboardType="number-pad" autoFocus={true} />
+              <Text style={styles.inputLabel}>Discount (%)</Text>
+              <TextInput style={styles.pinInput} value={editDiscount} onChangeText={setEditDiscount} keyboardType="decimal-pad" placeholder="Enter discount percentage" />
+              <Text style={styles.inputLabel}>Note</Text>
+              <TextInput style={styles.pinInput} value={editNote} onChangeText={setEditNote} />
+              <View style={styles.modalActions}>
+                  <TouchableOpacity style={[styles.button, styles.buttonCancel]} onPress={closeItemEditor}><Text style={styles.buttonText}>Cancel</Text></TouchableOpacity>
+                  <TouchableOpacity style={[styles.button, styles.buttonSave]} onPress={handleUpdateItem}><Text style={styles.buttonText}>Update</Text></TouchableOpacity>
               </View>
-          </Modal>
-          <Modal
-              animationType="slide"
-              transparent={true}
-              visible={isModalVisible}
-              onRequestClose={() => setIsModalVisible(false)}
-          >
-              <View style={styles.centeredView}>
-                  <View style={styles.modalView}>
-                      <Text style={styles.modalTitle}>{selectedCategory?.name}</Text>
-                      <FlatList
-                          data={selectedCategory?.foods}
-                          renderItem={renderFoodItem}
-                          keyExtractor={item => item.id}
-                      />
-                      <TouchableOpacity
-                          style={[styles.button, styles.buttonClose]}
-                          onPress={() => setIsModalVisible(false)}
-                      >
-                          <Text style={styles.textStyle}>Close</Text>
-                      </TouchableOpacity>
-                  </View>
-              </View>
-          </Modal>
-          <Modal
-              animationType="slide"
-              transparent={true}
-              visible={isDiscountModalVisible}
-              onRequestClose={() => setIsDiscountModalVisible(false)}
-          >
-              <View style={styles.centeredView}>
-                  <View style={styles.modalView}>
-                      <Text style={styles.modalTitle}>Select a Discount</Text>
-                      <FlatList
-                          data={discounts}
-                          renderItem={renderDiscountItem}
-                          keyExtractor={item => item.id}
-                          ListEmptyComponent={<Text>No active discounts available</Text>}
-                      />
-                      <TouchableOpacity
-                          style={[styles.button, styles.buttonClose]}
-                          onPress={() => setIsDiscountModalVisible(false)}
-                      >
-                          <Text style={styles.textStyle}>Close</Text>
-                      </TouchableOpacity>
-                  </View>
-              </View>
-          </Modal>
+          </View></View></Modal>
+          <Modal animationType="slide" transparent={true} visible={isModalVisible} onRequestClose={() => setIsModalVisible(false)}><View style={styles.centeredView}><View style={styles.modalView}>
+              <Text style={styles.modalTitle}>{selectedCategory?.name}</Text>
+              <FlatList data={selectedCategory?.foods} renderItem={({ item }) => <TouchableOpacity onPress={() => { addToOrder(item); setIsModalVisible(false); }}><View style={styles.foodItemContainer}><Text style={styles.foodItemName}>{item.name}</Text><Text style={styles.foodItemPrice}>{`₱${item.price.toFixed(2)}`}</Text><Text style={styles.foodItemDescription}>{item.description}</Text></View></TouchableOpacity>} keyExtractor={item => item.id.toString()} />
+              <TouchableOpacity style={[styles.button, styles.buttonClose]} onPress={() => setIsModalVisible(false)}><Text style={styles.textStyle}>Close</Text></TouchableOpacity>
+          </View></View></Modal>
+          <Modal animationType="slide" transparent={true} visible={isDiscountModalVisible} onRequestClose={() => setIsDiscountModalVisible(false)}><View style={styles.centeredView}><View style={styles.modalView}>
+              <Text style={styles.modalTitle}>Select a Discount</Text>
+              <FlatList data={discounts} renderItem={({ item }) => <TouchableOpacity onPress={() => applyDiscount(item)}><View style={styles.foodItemContainer}><Text style={styles.foodItemName}>{item.name}</Text><Text>{`${item.percent}% - ${item.type}`}</Text></View></TouchableOpacity>} keyExtractor={item => item.id.toString()} ListEmptyComponent={<Text>No active discounts</Text>} />
+              <TouchableOpacity style={[styles.button, styles.buttonClose]} onPress={() => setIsDiscountModalVisible(false)}><Text style={styles.textStyle}>Close</Text></TouchableOpacity>
+          </View></View></Modal>
 
           <View style={styles.header}>
-              <TouchableOpacity style={styles.headerBackButton} onPress={handleBack}>
-                  <Ionicons name="arrow-back-outline" size={24} color="white" />
-              </TouchableOpacity>
-              <View style={styles.headerTableInfo}>
-                  <Text style={styles.tableName}>{tableName}</Text>
-                  <Text style={styles.tableStatus}>
-                      {isTableOccupied ? `(Occupied by ${occupiedBy})` : '(Available)'}
-                  </Text>
-              </View>
+              <TouchableOpacity style={styles.headerBackButton} onPress={handleBack}><Ionicons name="arrow-back-outline" size={24} color="white" /></TouchableOpacity>
+              <View style={styles.headerTableInfo}><Text style={styles.tableName}>{tableName}</Text><Text style={styles.tableStatus}>{isTableOccupied ? `(Occupied by ${occupiedBy})` : '(Available)'}</Text></View>
               <View>
-                  <TouchableOpacity
-                      style={styles.helloButton}
-                      onPress={() => setIsDropdownVisible(!isDropdownVisible)}
-                      disabled={!!(currentStaff && isTableOccupied && occupiedBy && currentStaff.name !== occupiedBy)}
-                  >
-                      <Text style={styles.helloText}>
-                          {currentStaff ? currentStaff.name : 'Select Staff'}
-                      </Text>
-                      <Ionicons name="caret-down" size={20} color="white" />
-                  </TouchableOpacity>
-                  {isDropdownVisible && (
-                      <View style={styles.dropdown}>
-                          {currentStaff ? (
-                              <TouchableOpacity style={styles.dropdownItem} onPress={handleLogout}>
-                                  <Text style={styles.dropdownText}>Logout</Text>
-                              </TouchableOpacity>
-                          ) : (
-                              <FlatList
-                                  data={staffList}
-                                  keyExtractor={(item) => item.id}
-                                  renderItem={({ item }) => (
-                                      <TouchableOpacity
-                                          style={styles.dropdownItem}
-                                          onPress={() => handleStaffSelect(item)}
-                                      >
-                                          <Text style={styles.dropdownText}>{item.name}</Text>
-                                      </TouchableOpacity>
-                                  )}
-                                  ListEmptyComponent={
-                                      <View style={styles.dropdownItem}>
-                                          <Text style={styles.dropdownText}>No staff found</Text>
-                                      </View>
-                                  }
-                              />
-                          )}
-                      </View>
-                  )}
+                  <TouchableOpacity style={styles.helloButton} onPress={() => setIsDropdownVisible(!isDropdownVisible)} disabled={!!(currentStaff && isTableOccupied && occupiedBy && currentStaff.name !== occupiedBy)}><Text style={styles.helloText}>{currentStaff ? currentStaff.name : 'Select Staff'}</Text><Ionicons name="caret-down" size={20} color="white" /></TouchableOpacity>
+                  {isDropdownVisible && <View style={styles.dropdown}>{currentStaff ? <TouchableOpacity style={styles.dropdownItem} onPress={handleLogout}><Text style={styles.dropdownText}>Logout</Text></TouchableOpacity> : <FlatList data={staffList} keyExtractor={(item) => item.id.toString()} renderItem={({ item }) => <TouchableOpacity style={styles.dropdownItem} onPress={() => handleStaffSelect(item)}><Text style={styles.dropdownText}>{item.name}</Text></TouchableOpacity>} ListEmptyComponent={<View style={styles.dropdownItem}><Text style={styles.dropdownText}>No staff found</Text></View>} />}</View>}
               </View>
           </View>
 
-          {isDropdownVisible && (
-              <TouchableWithoutFeedback onPress={() => setIsDropdownVisible(false)}>
-                  <View style={styles.overlay} />
-              </TouchableWithoutFeedback>
-          )}
-
-          {isLandscape ? (
-              <View style={styles.landscapeLayout}>
-                  <View style={styles.leftPane}>{mainContent}</View>
-                  <View style={styles.rightPane}>{orderSidebar}</View>
-              </View>
-          ) : (
-              <ScrollView>
-                  {mainContent}
-                  {orderSidebar}
-              </ScrollView>
-          )}
+          {isDropdownVisible && <TouchableWithoutFeedback onPress={() => setIsDropdownVisible(false)}><View style={styles.overlay} /></TouchableWithoutFeedback>}
+          {isLandscape ? <View style={styles.landscapeLayout}><View style={styles.leftPane}>{mainContent}</View><View style={styles.rightPane}>{orderSidebar}</View></View> : <ScrollView>{mainContent}{orderSidebar}</ScrollView>}
       </SafeAreaView>
   );
 };
 
-// This is the full and complete stylesheet that will not crash
 const styles = StyleSheet.create({
     container: { flex: 1, backgroundColor: Colors.light.background },
     header: { backgroundColor: Colors.light.tint, paddingHorizontal: 20, paddingVertical: 15, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', zIndex: 2001 },

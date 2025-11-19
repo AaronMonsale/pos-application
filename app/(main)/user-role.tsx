@@ -1,9 +1,9 @@
-import { createUserWithEmailAndPassword } from "firebase/auth";
-import { doc, setDoc } from "firebase/firestore";
 import React, { useState } from 'react';
 import { Alert, Button, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { Colors } from '../../constants/theme';
-import { auth, db } from "../../firebase";
+import { PrismaClient } from '@prisma/client';
+
+const prisma = new PrismaClient();
 
 const UserRole = () => {
   const [email, setEmail] = useState("");
@@ -16,23 +16,30 @@ const UserRole = () => {
       return;
     }
     try {
-      const userCredential = await createUserWithEmailAndPassword(
-        auth,
-        email,
-        password
-      );
-      const user = userCredential.user;
-
-      await setDoc(doc(db, "users", user.uid), {
-        email: user.email,
-        role: role,
+      const existingUser = await prisma.user.findUnique({
+        where: { email },
       });
+
+      if (existingUser) {
+        Alert.alert("Error", "User with this email already exists.");
+        return;
+      }
+
+      await prisma.user.create({
+        data: {
+          email,
+          password, // Note: Passwords should be hashed in a production environment
+          role: role.toUpperCase(), // Store role as uppercase (e.g., POS, KITCHEN)
+        },
+      });
+
       Alert.alert("Success", "Employee account created successfully!");
       setEmail("");
       setPassword("");
       setRole("POS"); // Reset to default
     } catch (error: any) {
-      Alert.alert("Error", error.message);
+      console.error("Failed to create user:", error);
+      Alert.alert("Error", "Could not create employee account.");
     }
   };
 

@@ -1,14 +1,12 @@
 
 import { View, Text, Button } from "react-native";
 import React from "react";
-import { auth } from "../../firebase";
 import { useRouter } from "expo-router";
 
 const Dashboard = () => {
   const router = useRouter();
 
   const handleLogout = () => {
-    auth.signOut();
     router.replace("/(auth)/login");
   };
 

@@ -1,82 +1,87 @@
 
 import { Ionicons } from '@expo/vector-icons';
-import { collection, onSnapshot, query, where, doc, updateDoc, Timestamp } from 'firebase/firestore';
+import { PrismaClient, Table, Order, OrderItem, Food } from '@prisma/client';
+import { useRouter } from 'expo-router';
 import React, { useEffect, useState } from 'react';
 import { ActivityIndicator, Alert, FlatList, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
-import { db, auth } from '../../firebase';
-import { signOut } from 'firebase/auth';
-import { useRouter } from 'expo-router';
 
-interface OrderItem {
-    food: { name: string; price: number; };
-    quantity: number;
-    note?: string;
+const prisma = new PrismaClient();
+
+interface KitchenOrderItem extends OrderItem {
+    food: Food;
 }
 
-interface TableOrder {
-    id: string; 
-    name: string;
-    order: OrderItem[];
-    orderPlacedAt: Timestamp;
-    kitchenStatus: 'pending' | 'in_progress'; 
+interface KitchenOrder extends Order {
+    items: KitchenOrderItem[];
+}
+
+interface KitchenTable extends Table {
+    order: KitchenOrder | null;
 }
 
 const KitchenScreen = () => {
-    const [activeOrders, setActiveOrders] = useState<TableOrder[]>([]);
+    const [activeOrders, setActiveOrders] = useState<KitchenTable[]>([]);
     const [loading, setLoading] = useState(true);
     const router = useRouter();
 
     const handleLogout = async () => {
+        router.replace('/(auth)/login');
+    };
+
+    const fetchOrders = async () => {
         try {
-            await signOut(auth);
-            router.replace('/(auth)/login');
+            const orders = await prisma.table.findMany({
+                where: { 
+                    status: 'serving',
+                    order: { isNot: null },
+                },
+                include: {
+                    order: {
+                        include: {
+                            items: {
+                                include: {
+                                    food: true,
+                                },
+                            },
+                        },
+                    },
+                },
+                orderBy: {
+                    order: {
+                        orderPlacedAt: 'asc',
+                    },
+                },
+            });
+            setActiveOrders(orders.filter(o => o.order) as KitchenTable[]);
         } catch (error) {
-            console.error("Logout Error:", error);
-            Alert.alert("Logout Failed", "An error occurred while logging out.");
+            console.error("Error fetching kitchen orders: ", error);
+            Alert.alert("Error", "Could not load kitchen orders.");
+        } finally {
+            setLoading(false);
         }
     };
 
     useEffect(() => {
-        const q = query(collection(db, 'tables'), where('status', '==', 'serving'));
-
-        const unsubscribe = onSnapshot(q, (snapshot) => {
-            const orders: TableOrder[] = snapshot.docs
-                .filter(doc => doc.data().order && doc.data().order.length > 0)
-                .map(doc => ({
-                    id: doc.id,
-                    name: doc.data().name,
-                    order: doc.data().order,
-                    orderPlacedAt: doc.data().orderPlacedAt || Timestamp.now(),
-                    kitchenStatus: doc.data().kitchenStatus || 'pending'
-                }))
-                .sort((a, b) => a.orderPlacedAt.toMillis() - b.orderPlacedAt.toMillis());
-
-            setActiveOrders(orders);
-            setLoading(false);
-        }, (error) => {
-            console.error("Error fetching kitchen orders: ", error);
-            setLoading(false);
-            Alert.alert("Error", "Could not load kitchen orders.");
-        });
-
-        return () => unsubscribe();
+        fetchOrders();
+        const interval = setInterval(fetchOrders, 5000); // Poll every 5 seconds
+        return () => clearInterval(interval);
     }, []);
 
-    const handleAcceptOrder = async (tableId: string) => {
-        const tableRef = doc(db, 'tables', tableId);
+    const handleAcceptOrder = async (tableId: number) => {
         try {
-            await updateDoc(tableRef, { kitchenStatus: 'in_progress' });
+            await prisma.table.update({ where: { id: tableId }, data: { kitchenStatus: 'in_progress' } });
+            fetchOrders();
         } catch (error) {
             console.error("Error accepting order: ", error);
             Alert.alert("Error", "Failed to accept the order.");
         }
     };
     
-    const handleOrderPrepared = async (tableId: string) => {
-        const tableRef = doc(db, 'tables', tableId);
+    const handleOrderPrepared = async (tableId: number) => {
         try {
-            await updateDoc(tableRef, { status: 'order_ready' });
+            await prisma.table.update({ where: { id: tableId }, data: { status: 'order_ready' } });
             Alert.alert('Order Prepared', 'The order is ready to be served.');
+            fetchOrders();
         } catch (error) {
             console.error("Error updating order status: ", error);
             Alert.alert("Error", "Failed to mark order as prepared.");
@@ -87,7 +92,7 @@ const KitchenScreen = () => {
         return <ActivityIndicator size="large" style={styles.loader} />;
     }
 
-    const renderOrderCard = ({ item }: { item: TableOrder }) => (
+    const renderOrderCard = ({ item }: { item: KitchenTable }) => (
         <View style={styles.card}>
             <View style={styles.cardHeader}>
                 <Text style={styles.tableName}>Table: {item.name}</Text>
@@ -95,10 +100,10 @@ const KitchenScreen = () => {
                     <Text style={styles.statusText}>{item.kitchenStatus === 'pending' ? 'Pending' : 'In Progress'}</Text>
                 </View>
             </View>
-            <Text style={styles.timestamp}>Order Placed at {item.orderPlacedAt.toDate().toLocaleTimeString()}</Text>
+            <Text style={styles.timestamp}>Order Placed at {item.order?.orderPlacedAt?.toLocaleTimeString()}</Text>
 
             <View style={styles.itemList}>
-                {item.order.map((orderItem, index) => (
+                {item.order?.items.map((orderItem, index) => (
                     <View key={index} style={styles.itemContainer}>
                         <Text style={styles.quantity}>{orderItem.quantity}x</Text>
                         <View style={styles.itemDetails}>
@@ -142,7 +147,7 @@ const KitchenScreen = () => {
                 <FlatList
                     data={activeOrders}
                     renderItem={renderOrderCard}
-                    keyExtractor={item => item.id}
+                    keyExtractor={item => item.id.toString()}
                     contentContainerStyle={styles.listContainer}
                 />
             )}

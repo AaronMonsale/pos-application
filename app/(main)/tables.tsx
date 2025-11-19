@@ -1,33 +1,14 @@
 import { Ionicons } from '@expo/vector-icons';
-import { useFocusEffect, useLocalSearchParams, useNavigation, useRouter } from 'expo-router';
-import { addDoc, collection, doc, onSnapshot, updateDoc, writeBatch, query, where, serverTimestamp } from 'firebase/firestore';
+import { useLocalSearchParams, useNavigation, useRouter } from 'expo-router';
+import { PrismaClient, Table, Order, OrderItem, Food } from '@prisma/client';
 import React, { useCallback, useLayoutEffect, useState, useEffect } from 'react';
 import { ActivityIndicator, Alert, FlatList, Modal, StyleSheet, Text, TextInput, TouchableOpacity, TouchableWithoutFeedback, View } from 'react-native';
 import { Colors } from '../../constants/theme';
-import { auth, db } from '../../firebase';
 
-interface Table {
-    id: string;
-    name: string;
-    occupied?: boolean;
-    occupiedBy?: string;
-    deletedAt?: Date | null;
-}
+const prisma = new PrismaClient();
 
-interface OrderItem {
-    id: string;
-    name: string;
-    price: number;
-    quantity: number;
-    discount?: number;
-}
-
-interface FetchedOrderItem {
-    id: string;
-    name: string;
-    price: number;
-    quantity: number;
-    discount: number;
+interface TableWithRelations extends Table {
+    order: (Order & { items: (OrderItem & { food: Food })[] }) | null;
 }
 
 const TablesScreen = () => {
@@ -39,7 +20,7 @@ const TablesScreen = () => {
     const [staffName, setStaffName] = useState<string | null>(null);
 
     const [modalVisible, setModalVisible] = useState(false);
-    const [tables, setTables] = useState<Table[]>([]);
+    const [tables, setTables] = useState<TableWithRelations[]>([]);
     const [editingTable, setEditingTable] = useState<Table | null>(null);
 
     const [addMode, setAddMode] = useState<'single' | 'bulk'>('single');
@@ -47,8 +28,7 @@ const TablesScreen = () => {
     const [numberOfTables, setNumberOfTables] = useState('');
 
     const [viewOrderModalVisible, setViewOrderModalVisible] = useState(false);
-    const [selectedTableForView, setSelectedTableForView] = useState<Table | null>(null);
-    const [currentOrderItems, setCurrentOrderItems] = useState<OrderItem[]>([]);
+    const [selectedTableForView, setSelectedTableForView] = useState<TableWithRelations | null>(null);
     const [loadingOrder, setLoadingOrder] = useState(false);
     const [orderSubtotal, setOrderSubtotal] = useState(0);
     const [orderTax, setOrderTax] = useState(0);
@@ -63,141 +43,108 @@ const TablesScreen = () => {
         }
     }, [staffJson]);
 
-    useEffect(() => {
-        const tablesCollection = query(collection(db, 'tables'), where("deletedAt", "==", null));
-        const unsubscribe = onSnapshot(tablesCollection, (snapshot) => {
-            const tablesList = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Table)).sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }));
+    const fetchTables = async () => {
+        try {
+            const tablesList = await prisma.table.findMany({
+                where: { deletedAt: null },
+                include: {
+                    order: {
+                        include: {
+                            items: { include: { food: true } },
+                        },
+                    },
+                },
+                orderBy: { name: 'asc' },
+            });
             setTables(tablesList);
-        });
-        return () => unsubscribe();
-    },[]);
+        } catch (error) {
+            console.error(error);
+            Alert.alert('Error', 'Could not fetch tables.');
+        }
+    };
+
+    useEffect(() => {
+        fetchTables();
+        const interval = setInterval(fetchTables, 5000); // Poll every 5 seconds
+        return () => clearInterval(interval);
+    }, []);
 
     const handleLogout = useCallback(() => {
         Alert.alert("Logout", "Are you sure you want to log out?", [
             { text: "Cancel", style: "cancel" },
-            { text: "Logout", style: "destructive", onPress: () => { auth.signOut(); router.replace('/(auth)/login'); } },
+            { text: "Logout", style: "destructive", onPress: () => router.replace('/(auth)/login') },
         ]);
     }, [router]);
 
     useLayoutEffect(() => {
-        if (isAdmin) {
-            navigation.setOptions({
-                headerTitle: 'Manage Tables',
-                headerBackVisible: false,
-                headerLeft: () => (
-                    <TouchableOpacity onPress={() => router.push('/(main)/admin')} style={{ marginRight: 16 }}>
-                        <Ionicons name="arrow-back" size={24} color={'#000'} />
-                    </TouchableOpacity>
-                ),
-                headerStyle: { backgroundColor: 'white' },
-                headerTintColor: '#000',
-                headerTitleStyle: { fontWeight: 'normal', fontSize: 18, },
-                headerShadowVisible: false,
-                elevation: 0,
-            });
-        } else {
-            navigation.setOptions({
-                headerTitle: 'Tables',
-                headerLeft: () => null,
-                headerRight: () => (
-                    <TouchableOpacity style={{ marginRight: 15 }} onPress={handleLogout}>
-                        <Ionicons name="log-out-outline" size={28} color="white" />
-                    </TouchableOpacity>
-                ),
-                headerStyle: { backgroundColor: Colors.light.tint },
-                headerTintColor: 'white',
-                headerTitleStyle: { fontWeight: 'bold' },
-            });
-        }
+        navigation.setOptions({
+            headerTitle: isAdmin ? 'Manage Tables' : 'Tables',
+            headerBackVisible: !isAdmin,
+            headerLeft: isAdmin ? () => (
+                <TouchableOpacity onPress={() => router.push('/(main)/admin')} style={{ marginRight: 16 }}>
+                    <Ionicons name="arrow-back" size={24} color={'#000'} />
+                </TouchableOpacity>
+            ) : undefined,
+            headerRight: !isAdmin ? () => (
+                <TouchableOpacity style={{ marginRight: 15 }} onPress={handleLogout}>
+                    <Ionicons name="log-out-outline" size={28} color="white" />
+                </TouchableOpacity>
+            ) : undefined,
+            headerStyle: { backgroundColor: isAdmin ? 'white' : Colors.light.tint },
+            headerTintColor: isAdmin ? '#000' : 'white',
+            headerTitleStyle: { fontWeight: isAdmin ? 'normal' : 'bold', fontSize: 18 },
+            headerShadowVisible: !isAdmin,
+        });
     }, [navigation, router, isAdmin, handleLogout]);
 
     useEffect(() => {
-        if (!selectedTableForView || !viewOrderModalVisible) {
-            return;
-        }
+        if (!selectedTableForView || !viewOrderModalVisible) return;
 
         setLoadingOrder(true);
-        const tableDocRef = doc(db, 'tables', selectedTableForView.id);
+        const orderItems = selectedTableForView.order?.items || [];
+        const subtotal = orderItems.reduce((acc, item) => acc + (item.food.price * item.quantity), 0);
+        const totalDiscount = orderItems.reduce((acc, item) => acc + (item.food.price * item.quantity * ((item.discount || 0) / 100)), 0);
+        const subtotalAfterDiscounts = subtotal - totalDiscount;
+        const tax = subtotalAfterDiscounts * 0.10;
+        const serviceCharge = subtotalAfterDiscounts * 0.10;
+        const total = subtotalAfterDiscounts + tax + serviceCharge;
 
-        const unsubscribe = onSnapshot(tableDocRef, (docSnap) => {
-            if (docSnap.exists()) {
-                const tableData = docSnap.data();
-                const updatedTable = { id: docSnap.id, ...tableData } as Table;
-                setSelectedTableForView(updatedTable);
+        setOrderSubtotal(subtotal);
+        setOrderDiscount(totalDiscount);
+        setOrderTax(tax);
+        setOrderServiceCharge(serviceCharge);
+        setOrderTotal(total);
+        setLoadingOrder(false);
 
-                const orderData: { food: any; quantity: number; discount: number; }[] = tableData.order || [];
-                const fetchedItems: FetchedOrderItem[] = orderData.map((item) => ({
-                    ...item.food,
-                    quantity: item.quantity,
-                    discount: item.discount || 0,
-                }));
-                
-                const itemsForState: OrderItem[] = fetchedItems.map((item, index) => ({...item, id: `${item.id || 'food'}-${index}`}));
-                setCurrentOrderItems(itemsForState);
-
-                if (itemsForState.length > 0) {
-                    const subtotal = fetchedItems.reduce((acc: number, item: FetchedOrderItem) => acc + (item.price * item.quantity), 0);
-                    const totalItemDiscount = fetchedItems.reduce((acc: number, item: FetchedOrderItem) => acc + (item.price * item.quantity * ((item.discount || 0) / 100)), 0);
-                    const totalDiscount = totalItemDiscount;
-                    const subtotalAfterDiscounts = subtotal - totalDiscount;
-                    const tax = subtotalAfterDiscounts * 0.10;
-                    const serviceCharge = subtotalAfterDiscounts * 0.10;
-                    const total = subtotalAfterDiscounts + tax + serviceCharge;
-
-                    setOrderSubtotal(subtotal);
-                    setOrderDiscount(totalDiscount);
-                    setOrderTax(tax);
-                    setOrderServiceCharge(serviceCharge);
-                    setOrderTotal(total);
-                } else {
-                    setOrderSubtotal(0);
-                    setOrderDiscount(0);
-                    setOrderTax(0);
-                    setOrderServiceCharge(0);
-                    setOrderTotal(0);
-                }
-            } else {
-                 setViewOrderModalVisible(false);
-            }
-            setLoadingOrder(false);
-        }, (error) => {
-            console.error("Error fetching order for table: ", error);
-            Alert.alert("Error", "Could not fetch order details for this table.");
-            setLoadingOrder(false);
-        });
-
-        return () => unsubscribe();
-    }, [selectedTableForView?.id, viewOrderModalVisible]);
+    }, [selectedTableForView, viewOrderModalVisible]);
 
     const handleAddOrUpdateTable = async () => {
         if (!isAdmin) return;
 
         if (editingTable) {
             if (tableName.trim() === '') return Alert.alert('Error', 'Table name cannot be empty.');
-            const tableDoc = doc(db, 'tables', editingTable.id);
-            await updateDoc(tableDoc, { name: tableName });
+            await prisma.table.update({
+                where: { id: editingTable.id },
+                data: { name: tableName },
+            });
+            fetchTables();
             closeModal();
             return;
         }
 
         if (addMode === 'single') {
             if (tableName.trim() === '') return Alert.alert('Error', 'Table name cannot be empty.');
-            await addDoc(collection(db, 'tables'), { name: tableName, occupied: false, occupiedBy: null, deletedAt: null });
+            await prisma.table.create({ data: { name: tableName } });
         } else {
             const count = parseInt(numberOfTables, 10);
             if (isNaN(count) || count <= 0) {
                 return Alert.alert('Error', 'Please enter a valid number of tables to add.');
             }
-
-            const batch = writeBatch(db);
-            for (let i = 1; i <= count; i++) {
-                const newTableName = `Table ${i}`;
-                const newTableRef = doc(collection(db, 'tables'));
-                batch.set(newTableRef, { name: newTableName, occupied: false, occupiedBy: null, deletedAt: null });
-            }
-            await batch.commit();
+            const tableData = Array.from({ length: count }, (_, i) => ({ name: `Table ${i + 1}` }));
+            await prisma.table.createMany({ data: tableData });
         }
 
+        fetchTables();
         closeModal();
     };
 
@@ -217,31 +164,28 @@ const TablesScreen = () => {
                 text: 'Delete',
                 style: 'destructive',
                 onPress: async () => {
-                    const tableDoc = doc(db, 'tables', table.id);
-                    await updateDoc(tableDoc, { deletedAt: serverTimestamp() });
+                    await prisma.table.update({
+                        where: { id: table.id },
+                        data: { deletedAt: new Date() },
+                    });
+                    fetchTables();
                 },
             },
         ]);
     };
 
-    const handleTablePress = (table: Table) => {
+    const handleTablePress = (table: TableWithRelations) => {
         if (isAdmin) {
             viewOrder(table);
         } else {
             router.push({
                 pathname: '/(main)/pos',
-                params: {
-                    tableId: table.id,
-                    tableName: table.name,
-                    staff: staffJson,
-                },
+                params: { tableId: table.id.toString(), tableName: table.name, staff: staffJson },
             });
         }
     };
-    
 
-    const viewOrder = (table: Table) => {
-        if (!table.id) return;
+    const viewOrder = (table: TableWithRelations) => {
         setSelectedTableForView(table);
         setViewOrderModalVisible(true);
     };
@@ -253,7 +197,7 @@ const TablesScreen = () => {
             { text: 'Edit', onPress: () => handleEdit(table) },
             { text: 'Delete', style: 'destructive', onPress: () => handleDelete(table) },
         ]);
-    }
+    };
 
     const openAddModal = () => {
         if (!isAdmin) return;
@@ -262,22 +206,21 @@ const TablesScreen = () => {
         setTableName('');
         setNumberOfTables('');
         setModalVisible(true);
-    }
+    };
 
     const closeModal = () => {
         setModalVisible(false);
         setEditingTable(null);
         setTableName('');
         setNumberOfTables('');
-    }
+    };
 
-    const renderTableItem = ({ item }: { item: Table }) => (
+    const renderTableItem = ({ item }: { item: TableWithRelations }) => (
         <TouchableOpacity
             style={[styles.tile, item.occupied && styles.occupiedTile]}
             onPress={() => handleTablePress(item)}
             onLongPress={() => handleLongPress(item)}
-            activeOpacity={0.7}
-        >
+            activeOpacity={0.7}>
             <Ionicons name="grid-outline" size={32} color={item.occupied ? 'white' : Colors.light.tint} />
             <Text style={[styles.tileText, item.occupied && styles.occupiedTileText]}>{item.name}</Text>
             {item.occupied && item.occupiedBy ? (<Text style={styles.occupiedByText} numberOfLines={1}>{`by ${item.occupiedBy}`}</Text>) : null}
@@ -292,7 +235,7 @@ const TablesScreen = () => {
                     <TouchableWithoutFeedback>
                         <View style={styles.modalView}>
                             <Text style={styles.modalTitle}>{editingTable ? 'Edit Table' : 'Add New Table(s)'}</Text>
-                            {!editingTable ? (
+                            {!editingTable && (
                                 <View style={styles.modeSelector}>
                                     <TouchableOpacity style={[styles.modeButton, addMode === 'single' && styles.modeButtonActive]} onPress={() => setAddMode('single')}>
                                         <Text style={[styles.modeButtonText, addMode === 'single' && styles.modeButtonTextActive]}>Single</Text>
@@ -301,7 +244,7 @@ const TablesScreen = () => {
                                         <Text style={[styles.modeButtonText, addMode === 'bulk' && styles.modeButtonTextActive]}>Bulk</Text>
                                     </TouchableOpacity>
                                 </View>
-                            ) : null}
+                            )}
                             {addMode === 'single' || editingTable ? (
                                 <TextInput style={styles.input} placeholder="Table Name" value={tableName} onChangeText={setTableName} autoFocus />
                             ) : (
@@ -332,20 +275,19 @@ const TablesScreen = () => {
                                 <>
                                     <Text style={styles.modalTitle}>{`Order: ${selectedTableForView.name}`}</Text>
                                     {selectedTableForView.occupiedBy ? (<Text style={styles.responsibleStaffText}>{`Served by: ${selectedTableForView.occupiedBy}`}</Text>) : null}
-                                    
                                     {loadingOrder ? (
                                         <ActivityIndicator size="large" color={Colors.light.tint} style={{ marginVertical: 20 }}/>
                                     ) : (
                                         <>
                                             <FlatList
-                                                data={currentOrderItems}
-                                                keyExtractor={(item) => item.id}
+                                                data={selectedTableForView.order?.items || []}
+                                                keyExtractor={(item) => item.id.toString()}
                                                 renderItem={({ item }) => {
-                                                    const finalPrice = (item.price * item.quantity) * (1 - (item.discount || 0) / 100);
+                                                    const finalPrice = (item.food.price * item.quantity) * (1 - (item.discount || 0) / 100);
                                                     return (
                                                         <View style={styles.orderItemContainer}>
                                                             <View style={{ flex: 1, marginRight: 8 }}>
-                                                                <Text style={styles.orderItemText} numberOfLines={1}>{`${item.quantity}x ${item.name}`}</Text>
+                                                                <Text style={styles.orderItemText} numberOfLines={1}>{`${item.quantity}x ${item.food.name}`}</Text>
                                                                 {item.discount && item.discount > 0 ? (
                                                                     <Text style={styles.discountTag}>{`${item.discount}% off`}</Text>
                                                                 ) : null}
@@ -359,18 +301,18 @@ const TablesScreen = () => {
                                                 contentContainerStyle={{ flexGrow: 1 }}
                                             />
                                             
-                                            {currentOrderItems.length > 0 ? (
+                                            {(selectedTableForView.order?.items.length || 0) > 0 && (
                                                 <View style={styles.summaryContainer}>
                                                     <View style={styles.summaryRow}>
                                                         <Text style={styles.summaryText}>Subtotal</Text>
                                                         <Text style={styles.summaryText}>{`₱${orderSubtotal.toFixed(2)}`}</Text>
                                                     </View>
-                                                    {orderDiscount > 0 ? (
+                                                    {orderDiscount > 0 && (
                                                         <View style={styles.summaryRow}>
                                                             <Text style={[styles.summaryText, {color: 'red'}]}>Discount</Text>
                                                             <Text style={[styles.summaryText, {color: 'red'}]}>{`-₱${orderDiscount.toFixed(2)}`}</Text>
                                                         </View>
-                                                    ) : null}
+                                                    )}
                                                     <View style={styles.summaryRow}>
                                                         <Text style={styles.summaryText}>Tax</Text>
                                                         <Text style={styles.summaryText}>{`₱${orderTax.toFixed(2)}`}</Text>
@@ -384,14 +326,13 @@ const TablesScreen = () => {
                                                         <Text style={styles.totalText}>{`₱${orderTotal.toFixed(2)}`}</Text>
                                                     </View>
                                                 </View>
-                                            ) : null}
+                                            )}
                                         </>
                                     )}
                                     
                                     <TouchableOpacity
                                         style={[styles.button, styles.buttonClose]}
-                                        onPress={() => setViewOrderModalVisible(false)}
-                                    >
+                                        onPress={() => setViewOrderModalVisible(false)}>
                                         <Text style={styles.buttonText}>Close</Text>
                                     </TouchableOpacity>
                                 </>
@@ -405,19 +346,19 @@ const TablesScreen = () => {
 
     return (
         <View style={styles.container}>
-            {isAdmin ? (
+            {isAdmin && (
                 <TouchableOpacity style={styles.manageButton} onPress={openAddModal}>
                     <Text style={styles.manageButtonText}>Add New Table(s)</Text>
                 </TouchableOpacity>
-            ) : null}
+            )}
             <FlatList
                 data={tables}
                 renderItem={renderTableItem}
-                keyExtractor={item => item.id}
+                keyExtractor={item => item.id.toString()}
                 numColumns={3}
                 contentContainerStyle={styles.tilesContainer}
             />
-            {isAdmin ? renderAdminModal() : null}
+            {isAdmin && renderAdminModal()}
             {renderViewOrderModal()}
         </View>
     );

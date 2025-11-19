@@ -1,23 +1,14 @@
+
 import { MaterialIcons } from '@expo/vector-icons';
-import { addDoc, collection, deleteDoc, doc, onSnapshot, updateDoc, query, where, serverTimestamp } from "firebase/firestore";
 import React, { useEffect, useState } from 'react';
 import { Alert, FlatList, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { Colors } from '../../constants/theme';
-import { db } from '../../firebase';
+import { PrismaClient, Food, Category as PrismaCategory } from '@prisma/client';
 
-interface Food {
-  id: string;
-  name: string;
-  price: number;
-  description: string;
-  deletedAt?: Date | null;
-}
+const prisma = new PrismaClient();
 
-interface Category {
-  id: string;
-  name: string;
+interface Category extends PrismaCategory {
   foods: Food[];
-  deletedAt?: Date | null;
 }
 
 const MenuManagement = () => {
@@ -32,38 +23,21 @@ const MenuManagement = () => {
   const [editingFood, setEditingFood] = useState<Food | null>(null);
 
   useEffect(() => {
-    const categoriesCollection = query(collection(db, 'categories'), where("deletedAt", "==", null));
-    const unsubscribe = onSnapshot(categoriesCollection, (snapshot) => {
-      const categoriesList = snapshot.docs.map(doc => ({
-        id: doc.id,
-        name: doc.data().name,
-        foods: [], // Initialize with empty foods
-      })) as Category[];
-      setCategories(categoriesList);
-    });
-
-    return () => unsubscribe();
+    fetchCategories();
   }, []);
 
-  useEffect(() => {
-    if (selectedCategory) {
-      const foodsCollectionRef = query(collection(db, 'categories', selectedCategory.id, 'foods'), where("deletedAt", "==", null));
-      const unsubscribe = onSnapshot(foodsCollectionRef, (snapshot) => {
-        const foodsList = snapshot.docs.map(foodDoc => {
-          const data = foodDoc.data();
-          return {
-            id: foodDoc.id,
-            name: data.name,
-            price: data.price,
-            description: data.description
-          };
-        }) as Food[];
-        setSelectedCategory(prevCategory => ({ ...prevCategory!, foods: foodsList }));
+  const fetchCategories = async () => {
+    try {
+      const categoriesList = await prisma.category.findMany({
+        where: { deletedAt: null },
+        include: { foods: { where: { deletedAt: null } } },
       });
-
-      return () => unsubscribe();
+      setCategories(categoriesList);
+    } catch (error) {
+      console.error("Error fetching categories:", error);
+      Alert.alert('Error', 'Failed to fetch categories.');
     }
-  }, [selectedCategory?.id]);
+  };
 
   const handleCreateCategory = async () => {
     if (!newCategoryName) {
@@ -71,9 +45,10 @@ const MenuManagement = () => {
       return;
     }
     try {
-      await addDoc(collection(db, 'categories'), { name: newCategoryName, deletedAt: null });
+      await prisma.category.create({ data: { name: newCategoryName } });
       setNewCategoryName('');
       navigateToList();
+      fetchCategories();
       Alert.alert('Success', 'Category created successfully');
     } catch (error) {
       Alert.alert('Error', 'Failed to create category.');
@@ -90,20 +65,21 @@ const MenuManagement = () => {
         return;
       }
     try {
-        const categoryRef = doc(db, "categories", selectedCategory.id);
-        const foodsCollectionRef = collection(categoryRef, "foods");
-        await addDoc(foodsCollectionRef, {
-            name: newFoodName,
-            price: parseFloat(newFoodPrice),
-            description: newFoodDescription,
-            deletedAt: null,
-          });
+        await prisma.food.create({
+            data: {
+                name: newFoodName,
+                price: parseFloat(newFoodPrice),
+                description: newFoodDescription,
+                categoryId: selectedCategory.id,
+            },
+        });
 
       setNewFoodName('');
       setNewFoodPrice('');
       setNewFoodDescription('');
 
       setScreen('categoryDetails');
+      fetchCategories();
       Alert.alert('Success', 'Food added successfully');
     } catch (error) {
       console.error("Error adding food: ", error);
@@ -122,11 +98,14 @@ const MenuManagement = () => {
       return;
     }
     try {
-      const categoryRef = doc(db, 'categories', editingCategory.id);
-      await updateDoc(categoryRef, { name: newCategoryName });
+      await prisma.category.update({
+        where: { id: editingCategory.id },
+        data: { name: newCategoryName },
+      });
       setNewCategoryName('');
       setEditingCategory(null);
       navigateToList();
+      fetchCategories();
       Alert.alert('Success', 'Category updated successfully');
     } catch (error) {
       Alert.alert('Error', 'Failed to update category.');
@@ -139,11 +118,13 @@ const MenuManagement = () => {
       return;
     }
     try {
-      const foodRef = doc(db, 'categories', selectedCategory.id, 'foods', editingFood.id);
-      await updateDoc(foodRef, {
-        name: newFoodName,
-        price: parseFloat(newFoodPrice),
-        description: newFoodDescription,
+      await prisma.food.update({
+        where: { id: editingFood.id },
+        data: {
+          name: newFoodName,
+          price: parseFloat(newFoodPrice),
+          description: newFoodDescription,
+        },
       });
 
       setNewFoodName('');
@@ -152,6 +133,7 @@ const MenuManagement = () => {
       setEditingFood(null);
 
       setScreen('categoryDetails');
+      fetchCategories();
       Alert.alert('Success', 'Food updated successfully');
     } catch (error) {
       console.error("Error updating food: ", error);
@@ -159,20 +141,23 @@ const MenuManagement = () => {
     }
   };
 
-  const handleDeleteCategory = async (categoryId: string) => {
+  const handleDeleteCategory = async (categoryId: number) => {
     Alert.alert(
       'Delete Category',
       'Are you sure you want to delete this category and all its food items?',
       [
         { text: 'Cancel', style: 'cancel' },
-        { 
-          text: 'Delete', 
-          style: 'destructive', 
+        {
+          text: 'Delete',
+          style: 'destructive',
           onPress: async () => {
             try {
-              const categoryRef = doc(db, 'categories', categoryId);
-              await updateDoc(categoryRef, { deletedAt: serverTimestamp() });
+              await prisma.category.update({
+                where: { id: categoryId },
+                data: { deletedAt: new Date() },
+              });
               navigateToList();
+              fetchCategories();
               Alert.alert('Success', 'Category deleted successfully');
             } catch (error) {
               Alert.alert('Error', 'Failed to delete category.');
@@ -183,7 +168,7 @@ const MenuManagement = () => {
     );
   };
 
-  const handleDeleteFood = async (foodId: string) => {
+  const handleDeleteFood = async (foodId: number) => {
     if (!selectedCategory) return;
 
     Alert.alert(
@@ -196,8 +181,11 @@ const MenuManagement = () => {
           style: 'destructive',
           onPress: async () => {
             try {
-                const foodRef = doc(db, 'categories', selectedCategory.id, 'foods', foodId);
-                await updateDoc(foodRef, { deletedAt: serverTimestamp() });
+                await prisma.food.update({
+                    where: { id: foodId },
+                    data: { deletedAt: new Date() }
+                });
+              fetchCategories();
               Alert.alert('Success', 'Food deleted successfully');
             } catch (error) {
               console.error("Error deleting food: ", error);
@@ -358,7 +346,7 @@ const MenuManagement = () => {
         <FlatList
           data={selectedCategory.foods}
           renderItem={renderFoodItem}
-          keyExtractor={(item) => item.id}
+          keyExtractor={(item) => item.id.toString()}
           style={styles.foodList}
         />
       </View>

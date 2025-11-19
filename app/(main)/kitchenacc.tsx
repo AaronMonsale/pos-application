@@ -1,14 +1,15 @@
 
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
-import { collection, deleteDoc, doc, onSnapshot, query, where } from 'firebase/firestore';
 import React, { useEffect, useState } from 'react';
 import { Alert, FlatList, StyleSheet, Text, TouchableOpacity, View, ActivityIndicator } from 'react-native';
-import { db } from '../../firebase';
+import { PrismaClient } from '@prisma/client';
 import { Colors } from '../../constants/theme';
 
+const prisma = new PrismaClient();
+
 interface KitchenUser {
-    id: string;
+    id: number;
     email: string;
 }
 
@@ -18,21 +19,21 @@ const KitchenAccountsScreen = () => {
     const router = useRouter();
 
     useEffect(() => {
-        const q = query(collection(db, "users"), where("role", "==", "Kitchen"));
-        const unsubscribe = onSnapshot(q, (snapshot) => {
-            const users = snapshot.docs.map(doc => ({
-                id: doc.id,
-                email: doc.data().email,
-            }));
-            setKitchenUsers(users);
-            setLoading(false);
-        }, (error) => {
-            console.error("Error fetching kitchen accounts: ", error);
-            Alert.alert("Error", "Could not load kitchen accounts.");
-            setLoading(false);
-        });
+        const fetchKitchenUsers = async () => {
+            try {
+                const users = await prisma.user.findMany({
+                    where: { role: "KITCHEN" },
+                });
+                setKitchenUsers(users);
+            } catch (error) {
+                console.error("Error fetching kitchen accounts: ", error);
+                Alert.alert("Error", "Could not load kitchen accounts.");
+            } finally {
+                setLoading(false);
+            }
+        };
 
-        return () => unsubscribe();
+        fetchKitchenUsers();
     }, []);
 
     const handleDelete = (user: KitchenUser) => {
@@ -46,10 +47,9 @@ const KitchenAccountsScreen = () => {
                     style: "destructive",
                     onPress: async () => {
                         try {
-                            await deleteDoc(doc(db, "users", user.id));
+                            await prisma.user.delete({ where: { id: user.id } });
+                            setKitchenUsers(kitchenUsers.filter(u => u.id !== user.id));
                             Alert.alert("User Deleted", `The account for ${user.email} has been deleted.`);
-                            // Note: This does not delete the user from Firebase Authentication.
-                            // A server-side function is required for that.
                         } catch (error) {
                             console.error("Error deleting user: ", error);
                             Alert.alert("Error", "Failed to delete the user account.");
@@ -81,7 +81,7 @@ const KitchenAccountsScreen = () => {
             <FlatList
                 data={kitchenUsers}
                 renderItem={renderItem}
-                keyExtractor={(item) => item.id}
+                keyExtractor={(item) => item.id.toString()}
                 contentContainerStyle={kitchenUsers.length === 0 ? styles.emptyContainer : styles.listContainer}
                 ListEmptyComponent={() => (
                     <Text style={styles.emptyText}>No kitchen accounts found.</Text>

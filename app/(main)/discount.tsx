@@ -1,11 +1,12 @@
 import DateTimePicker from '@react-native-community/datetimepicker';
-import { addDoc, collection, deleteDoc, doc, getDoc, getDocs, Timestamp, query, where, updateDoc, serverTimestamp } from 'firebase/firestore';
+import { PrismaClient } from '@prisma/client';
 import React, { useEffect, useState } from 'react';
 import { Alert, FlatList, KeyboardAvoidingView, Modal, Platform, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import MultiSelect from 'react-native-multiple-select';
 import RNPickerSelect from 'react-native-picker-select';
 import { Colors } from '../../constants/theme';
-import { db } from '../../firebase/firebaseConfig'; // Adjust the import path as needed
+
+const prisma = new PrismaClient();
 
 interface Item {
   id: string;
@@ -13,18 +14,14 @@ interface Item {
 }
 
 interface Discount {
-  id: string;
+  id: number;
   name: string;
-  value?: number;
-  percent?: number;
+  percent: number;
   type: string;
-  calculationType: 'value' | 'percentage';
-  currency: string;
-  startDate: Timestamp;
-  expirationDate: Timestamp;
-  categories?: string[];
-  foods?: string[];
-  deletedAt?: Date | null;
+  startDate: Date;
+  expirationDate: Date;
+  categories?: any[];
+  foods?: any[];
 }
 
 const DiscountScreen = () => {
@@ -35,11 +32,8 @@ const DiscountScreen = () => {
   const [selectedDiscountCategories, setSelectedDiscountCategories] = useState<string[]>([]);
   const [selectedDiscountFoods, setSelectedDiscountFoods] = useState<string[]>([]);
   const [discountName, setDiscountName] = useState('');
-  const [discountValue, setDiscountValue] = useState('');
   const [discountPercent, setDiscountPercent] = useState('');
   const [discountType, setDiscountType] = useState('');
-  const [discountCurrency, setDiscountCurrency] = useState('PHP');
-  const [calculationType, setCalculationType] = useState<'value' | 'percentage'>('percentage');
   const [discountStart, setDiscountStart] = useState(new Date());
   const [discountExpiration, setDiscountExpiration] = useState(new Date());
   const [showStartDatePicker, setShowStartDatePicker] = useState(false);
@@ -50,19 +44,20 @@ const DiscountScreen = () => {
   const [selectedFoods, setSelectedFoods] = useState<string[]>([]);
 
   const fetchDiscounts = async () => {
-    const discountsCollection = query(collection(db, 'discounts'), where("deletedAt", "==", null));
-    const discountSnapshot = await getDocs(discountsCollection);
-    const discountsList = discountSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Discount));
+    const discountsList = await prisma.discount.findMany({
+      include: {
+        categories: true,
+        foods: true,
+      },
+    });
     setDiscounts(discountsList);
   };
 
   useEffect(() => {
     if (modalVisible) {
       const fetchCategories = async () => {
-        const categoriesCollection = query(collection(db, 'categories'), where("deletedAt", "==", null));
-        const categorySnapshot = await getDocs(categoriesCollection);
-        const categoriesList = categorySnapshot.docs.map(doc => ({ id: doc.id, name: doc.data().name }));
-        setCategories(categoriesList);
+        const categoriesList = await prisma.category.findMany();
+        setCategories(categoriesList.map(c => ({ id: c.id.toString(), name: c.name })));
       };
 
       fetchCategories();
@@ -74,14 +69,14 @@ const DiscountScreen = () => {
   useEffect(() => {
     const fetchFoods = async () => {
       if (selectedCategories.length > 0) {
-        let allFoods: Item[] = [];
-        for (const categoryId of selectedCategories) {
-          const foodsCollectionRef = query(collection(db, 'categories', categoryId, 'foods'), where("deletedAt", "==", null));
-          const foodSnapshot = await getDocs(foodsCollectionRef);
-          const foodsList = foodSnapshot.docs.map(doc => ({ id: doc.id, name: doc.data().name }));
-          allFoods = [...allFoods, ...foodsList];
-        }
-        setFoods(allFoods);
+        const foodsList = await prisma.food.findMany({
+          where: {
+            categoryId: {
+              in: selectedCategories.map(c => parseInt(c, 10)),
+            },
+          },
+        });
+        setFoods(foodsList.map(f => ({ id: f.id.toString(), name: f.name })));
       } else {
         setFoods([]);
       }
@@ -95,33 +90,17 @@ const DiscountScreen = () => {
     if (selectedDiscount) {
       const fetchDetails = async () => {
         if (selectedDiscount.categories && selectedDiscount.categories.length > 0) {
-          const categoryNames = [];
-          for (const categoryId of selectedDiscount.categories) {
-            const categoryDoc = await getDoc(doc(db, 'categories', categoryId));
-            if (categoryDoc.exists()) {
-              categoryNames.push(categoryDoc.data().name);
-            }
-          }
+          const categoryNames = selectedDiscount.categories.map(c => c.name);
           setSelectedDiscountCategories(categoryNames);
         } else {
-            setSelectedDiscountCategories([]);
+          setSelectedDiscountCategories([]);
         }
 
         if (selectedDiscount.foods && selectedDiscount.foods.length > 0) {
-            const foodNames = [];
-            const allCategoriesSnapshot = await getDocs(collection(db, 'categories'));
-            for (const categoryDoc of allCategoriesSnapshot.docs) {
-                const foodsCollectionRef = collection(db, 'categories', categoryDoc.id, 'foods');
-                const foodSnapshot = await getDocs(foodsCollectionRef);
-                for (const foodDoc of foodSnapshot.docs) {
-                    if (selectedDiscount.foods.includes(foodDoc.id)) {
-                        foodNames.push(foodDoc.data().name);
-                    }
-                }
-            }
-            setSelectedDiscountFoods(foodNames);
+          const foodNames = selectedDiscount.foods.map(f => f.name);
+          setSelectedDiscountFoods(foodNames);
         } else {
-            setSelectedDiscountFoods([]);
+          setSelectedDiscountFoods([]);
         }
       };
       fetchDetails();
@@ -142,52 +121,37 @@ const DiscountScreen = () => {
 
   const formatDate = (date: Date) => {
     if (!date) return '';
-    return `${date.getDate().toString().padStart(2, '0')}-${(date.getMonth() + 1).toString().padStart(2, '0')}-${date.getFullYear()}`;
+    return `${date.getDate().toString().padStart(2, '0')}-${(date.getMonth() + 1).toString().padStart(2, '0')}-${date.getFullYear()}`.toString();
   };
 
   const handleCreateDiscount = async () => {
-    if (!discountName || !discountType) {
+    if (!discountName || !discountType || !discountPercent) {
       Alert.alert('Error', 'Please fill in all required fields.');
       return;
     }
 
-    const discountData: any = {
-        name: discountName,
-        type: discountType,
-        calculationType: calculationType,
-        currency: discountCurrency,
-        startDate: discountStart,
-        expirationDate: discountExpiration,
-        categories: selectedCategories,
-        foods: selectedFoods,
-        deletedAt: null,
-    };
-
-    if (calculationType === 'percentage') {
-        if (!discountPercent) {
-            Alert.alert('Error', 'Please enter a discount percentage.');
-            return;
-        }
-        discountData.percent = parseFloat(discountPercent);
-    } else {
-        if (!discountValue) {
-            Alert.alert('Error', 'Please enter a discount value.');
-            return;
-        }
-        discountData.value = parseFloat(discountValue);
-    }
-
     try {
-      await addDoc(collection(db, 'discounts'), discountData);
+      await prisma.discount.create({
+        data: {
+          name: discountName,
+          percent: parseFloat(discountPercent),
+          type: discountType,
+          startDate: discountStart,
+          expirationDate: discountExpiration,
+          categories: {
+            connect: selectedCategories.map(id => ({ id: parseInt(id, 10) })),
+          },
+          foods: {
+            connect: selectedFoods.map(id => ({ id: parseInt(id, 10) })),
+          },
+        },
+      });
       Alert.alert('Success', 'Discount created successfully!');
       setModalVisible(false);
       // Reset form
       setDiscountName('');
-      setDiscountValue('');
       setDiscountPercent('');
       setDiscountType('');
-      setDiscountCurrency('PHP');
-      setCalculationType('percentage');
       setDiscountStart(new Date());
       setDiscountExpiration(new Date());
       setSelectedCategories([]);
@@ -198,7 +162,7 @@ const DiscountScreen = () => {
     }
   };
 
-  const handleDeleteDiscount = async (discountId: string) => {
+  const handleDeleteDiscount = async (discountId: number) => {
     Alert.alert(
       "Delete Discount",
       "Are you sure you want to delete this discount?",
@@ -211,8 +175,7 @@ const DiscountScreen = () => {
           text: "OK",
           onPress: async () => {
             try {
-              const discountDoc = doc(db, "discounts", discountId);
-              await updateDoc(discountDoc, { deletedAt: serverTimestamp() });
+              await prisma.discount.delete({ where: { id: discountId } });
               Alert.alert("Success", "Discount deleted successfully!");
               setDetailsModalVisible(false);
               fetchDiscounts();
@@ -234,34 +197,12 @@ const DiscountScreen = () => {
         value={discountName}
         placeholder="Discount Name"
       />
-        <View style={styles.pickerContainer}>
-            <RNPickerSelect
-                onValueChange={(value) => setCalculationType(value)}
-                items={[
-                    { label: 'Percentage', value: 'percentage' },
-                    { label: 'Value', value: 'value' },
-                ]}
-                style={pickerSelectStyles}
-                placeholder={{ label: "Select calculation type", value: 'percentage' }}
-                value={calculationType}
-            />
-        </View>
-
         <TextInput
-            style={calculationType === 'percentage' ? styles.input : styles.disabledInput}
+            style={styles.input}
             onChangeText={setDiscountPercent}
             value={discountPercent}
             placeholder="Discount Percent"
             keyboardType="numeric"
-            editable={calculationType === 'percentage'}
-        />
-        <TextInput
-            style={calculationType === 'value' ? styles.input : styles.disabledInput}
-            onChangeText={setDiscountValue}
-            value={discountValue}
-            placeholder="Discount Value"
-            keyboardType="numeric"
-            editable={calculationType === 'value'}
         />
       <View style={styles.pickerContainer}>
         <RNPickerSelect
@@ -359,9 +300,9 @@ const DiscountScreen = () => {
     }}>
       <View style={styles.discountItem}>
         <Text style={styles.discountName}>{item.name}</Text>
-        <Text>{item.calculationType === 'percentage' ? `${item.percent}%` : `${item.currency} ${item.value}`} ({item.calculationType})</Text>
-        <Text>Start: {item.startDate && formatDate(item.startDate.toDate())}</Text>
-        <Text>Expires: {item.expirationDate && formatDate(item.expirationDate.toDate())}</Text>
+        <Text>{item.percent}%</Text>
+        <Text>Start: {formatDate(new Date(item.startDate))}</Text>
+        <Text>Expires: {formatDate(new Date(item.expirationDate))}</Text>
       </View>
     </TouchableOpacity>
   );
@@ -375,7 +316,7 @@ const DiscountScreen = () => {
       <FlatList
         data={discounts}
         renderItem={renderDiscountItem}
-        keyExtractor={item => item.id}
+        keyExtractor={item => item.id.toString()}
         style={{width: '100%'}}
       />
 
@@ -428,9 +369,9 @@ const DiscountScreen = () => {
             {selectedDiscount && (
               <>
                 <Text style={styles.modalText}>{selectedDiscount.name}</Text>
-                <Text>{selectedDiscount.calculationType === 'percentage' ? `${selectedDiscount.percent}%` : `${selectedDiscount.currency} ${selectedDiscount.value}`} ({selectedDiscount.calculationType})</Text>
-                <Text>Start: {selectedDiscount.startDate && formatDate(selectedDiscount.startDate.toDate())}</Text>
-                <Text>Expires: {selectedDiscount.expirationDate && formatDate(selectedDiscount.expirationDate.toDate())}</Text>
+                <Text>{selectedDiscount.percent}%</Text>
+                <Text>Start: {formatDate(new Date(selectedDiscount.startDate))}</Text>
+                <Text>Expires: {formatDate(new Date(selectedDiscount.expirationDate))}</Text>
 
                 {selectedDiscountCategories.length > 0 && (
                     <>

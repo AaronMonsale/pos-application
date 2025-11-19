@@ -1,18 +1,11 @@
 
 import { Ionicons } from '@expo/vector-icons';
-import { createUserWithEmailAndPassword } from 'firebase/auth';
-import { collection, doc, onSnapshot, query, serverTimestamp, setDoc, updateDoc, where } from 'firebase/firestore';
+import { PrismaClient, User } from '@prisma/client';
 import React, { useEffect, useState } from 'react';
 import { Alert, FlatList, Modal, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { Colors } from '../../constants/theme';
-import { auth, db } from '../../firebase';
 
-interface User {
-    id: string;
-    email: string;
-    role: string;
-    deletedAt?: Date | null;
-}
+const prisma = new PrismaClient();
 
 const EmployeeAccScreen = () => {
     const [employees, setEmployees] = useState<User[]>([]);
@@ -20,17 +13,21 @@ const EmployeeAccScreen = () => {
     const [email, setEmail] = useState('');
     const [password, setPassword] = useState('');
 
-    useEffect(() => {
-        const usersCollection = query(collection(db, 'users'), where('role', '==', 'employee'), where("deletedAt", "==", null));
-        const unsubscribe = onSnapshot(usersCollection, (snapshot) => {
-            const list = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as User));
-            setEmployees(list.sort((a, b) => a.email.localeCompare(b.email)));
-        }, (error) => {
+    const fetchEmployees = async () => {
+        try {
+            const list = await prisma.user.findMany({
+                where: { role: 'USER', deletedAt: null },
+                orderBy: { email: 'asc' },
+            });
+            setEmployees(list);
+        } catch (error) {
             console.error("Error fetching employees: ", error);
             Alert.alert("Error", "Could not fetch employee list.");
-        });
+        }
+    };
 
-        return () => unsubscribe();
+    useEffect(() => {
+        fetchEmployees();
     }, []);
 
     const handleAddEmployee = async () => {
@@ -40,22 +37,22 @@ const EmployeeAccScreen = () => {
         }
 
         try {
-            const userCredential = await createUserWithEmailAndPassword(auth, email, password);
-            const user = userCredential.user;
-            await setDoc(doc(db, 'users', user.uid), {
-                email: user.email,
-                role: 'employee',
-                createdAt: serverTimestamp(),
-                deletedAt: null,
+            await prisma.user.create({
+                data: {
+                    email,
+                    password, // Remember to hash passwords in a real app!
+                    role: 'USER',
+                },
             });
 
             Alert.alert('Success', 'Employee account created successfully.');
             setModalVisible(false);
             setEmail('');
             setPassword('');
+            fetchEmployees();
         } catch (error: any) {
             console.error("Error creating employee: ", error);
-            Alert.alert('Error', error.message);
+            Alert.alert('Error', "An account with this email already exists.");
         }
     };
 
@@ -70,8 +67,11 @@ const EmployeeAccScreen = () => {
                     style: 'destructive',
                     onPress: async () => {
                         try {
-                            const userDoc = doc(db, 'users', user.id);
-                            await updateDoc(userDoc, { deletedAt: serverTimestamp() });
+                            await prisma.user.update({
+                                where: { id: user.id },
+                                data: { deletedAt: new Date() },
+                            });
+                            fetchEmployees();
                         } catch (error) {
                             console.error("Error deleting employee: ", error);
                             Alert.alert("Error", "Could not delete employee.");
@@ -99,7 +99,7 @@ const EmployeeAccScreen = () => {
             <FlatList
                 data={employees}
                 renderItem={renderUserItem}
-                keyExtractor={item => item.id}
+                keyExtractor={item => item.id.toString()}
                 ListEmptyComponent={<Text style={styles.emptyText}>No employee users found.</Text>}
             />
 

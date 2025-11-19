@@ -1,25 +1,42 @@
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import React from 'react';
-import { FlatList, SafeAreaView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import React, { useEffect, useState } from 'react';
+import { FlatList, SafeAreaView, StyleSheet, Text, TouchableOpacity, View, ActivityIndicator } from 'react-native';
 import { Colors } from '../../constants/theme';
+import { PrismaClient, Transaction, TransactionItem } from '@prisma/client';
+
+const prisma = new PrismaClient();
+
+interface TransactionWithItems extends Transaction {
+    items: TransactionItem[];
+}
 
 const SummaryScreen = () => {
     const router = useRouter();
     const params = useLocalSearchParams();
-    const {
-        items: itemsJson = '[]',
-        subtotal = '0',
-        discount = '0',
-        tax = '0',
-        serviceCharge = '0',
-        total = '0',
-        staffName = '',
-        tableName = ''
-    } = params;
+    const { transactionId } = params as { transactionId: string };
+    const [transaction, setTransaction] = useState<TransactionWithItems | null>(null);
+    const [loading, setLoading] = useState(true);
 
-    const items = JSON.parse(itemsJson as string);
+    useEffect(() => {
+        const fetchTransaction = async () => {
+            if (!transactionId) return;
+            try {
+                const fetchedTransaction = await prisma.transaction.findUnique({
+                    where: { id: parseInt(transactionId) },
+                    include: { items: true },
+                });
+                setTransaction(fetchedTransaction as TransactionWithItems);
+            } catch (error) {
+                console.error("Failed to fetch transaction details:", error);
+            } finally {
+                setLoading(false);
+            }
+        };
 
-    const renderOrderItem = ({ item }: { item: any }) => (
+        fetchTransaction();
+    }, [transactionId]);
+
+    const renderOrderItem = ({ item }: { item: TransactionItem }) => (
         <View style={styles.itemRow}>
             <View>
                 <Text style={styles.itemName}>{`${item.name} x${item.quantity}`}</Text>
@@ -33,43 +50,51 @@ const SummaryScreen = () => {
         </View>
     );
 
+    if (loading) {
+        return <ActivityIndicator size="large" color={Colors.light.tint} style={{ flex: 1, justifyContent: 'center' }} />;
+    }
+
+    if (!transaction) {
+        return <View style={styles.container}><Text>Transaction not found.</Text></View>;
+    }
+
     return (
         <SafeAreaView style={styles.container}>
             <View style={styles.header}>
                 <Text style={styles.headerTitle}>Transaction Summary</Text>
             </View>
             <View style={styles.detailsContainer}>
-                <Text style={styles.detailText}>{`Staff: ${staffName as string}`}</Text>
-                <Text style={styles.detailText}>{`Table: ${tableName as string}`}</Text>
+                <Text style={styles.detailText}>{`Staff: ${transaction.staffName}`}</Text>
+                <Text style={styles.detailText}>{`Table: ${transaction.tableName}`}</Text>
             </View>
             <FlatList
-                data={items}
+                data={transaction.items}
                 renderItem={renderOrderItem}
-                keyExtractor={(item, index) => index.toString()}
+                keyExtractor={(item) => item.id.toString()}
                 style={styles.list}
             />
             <View style={styles.summaryContainer}>
                 <View style={styles.summaryRow}>
                     <Text style={{fontSize: 16}}>Subtotal</Text>
-                    <Text style={{fontSize: 16}}>{`₱${parseFloat(subtotal as string).toFixed(2)}`}</Text>
+                    <Text style={{fontSize: 16}}>{`₱${transaction.subtotal.toFixed(2)}`}</Text>
                 </View>
-                {parseFloat(discount as string) > 0 && (
+                {transaction.discount > 0 && (
                      <View style={styles.summaryRow}>
                         <Text style={styles.discountText}>Discount</Text>
-                        <Text style={styles.discountText}>{`-₱${parseFloat(discount as string).toFixed(2)}`}</Text>
+                        <Text style={styles.discountText}>{`-₱${transaction.discount.toFixed(2)}`}</Text>
                     </View>
                 )}
                 <View style={styles.summaryRow}>
                     <Text style={{fontSize: 16}}>Tax</Text>
-                    <Text style={{fontSize: 16}}>{`₱${parseFloat(tax as string).toFixed(2)}`}</Text>
+                    <Text style={{fontSize: 16}}>{`₱${transaction.tax.toFixed(2)}`}</Text>
                 </View>
                 <View style={styles.summaryRow}>
                     <Text style={{fontSize: 16}}>Service Charge</Text>
-                    <Text style={{fontSize: 16}}>{`₱${parseFloat(serviceCharge as string).toFixed(2)}`}</Text>
+                    <Text style={{fontSize: 16}}>{`₱${transaction.serviceCharge.toFixed(2)}`}</Text>
                 </View>
                 <View style={styles.totalRow}>
                     <Text style={styles.totalText}>TOTAL</Text>
-                    <Text style={styles.totalText}>{`₱${parseFloat(total as string).toFixed(2)}`}</Text>
+                    <Text style={styles.totalText}>{`₱${transaction.total.toFixed(2)}`}</Text>
                 </View>
             </View>
             <TouchableOpacity

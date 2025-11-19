@@ -1,34 +1,30 @@
 
 import { Ionicons } from '@expo/vector-icons';
-import { collection, doc, onSnapshot, query, serverTimestamp, updateDoc, where } from 'firebase/firestore';
+import { PrismaClient, User } from '@prisma/client';
 import React, { useEffect, useState } from 'react';
 import { Alert, FlatList, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { Colors } from '../../constants/theme';
-import { db } from '../../firebase';
 
-interface User {
-    id: string;
-    email: string;
-    role: string;
-    deletedAt?: Date | null;
-}
+const prisma = new PrismaClient();
 
 const AdminAccScreen = () => {
     const [admins, setAdmins] = useState<User[]>([]);
 
-    useEffect(() => {
-        const usersCollection = query(collection(db, 'users'), where('role', '==', 'admin'), where("deletedAt", "==", null));
-        
-        const unsubscribe = onSnapshot(usersCollection, (snapshot) => {
-            const list = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as User));
-            setAdmins(list.sort((a, b) => a.email.localeCompare(b.email)));
-        }, (error) => {
+    const fetchAdmins = async () => {
+        try {
+            const list = await prisma.user.findMany({
+                where: { role: 'ADMIN', deletedAt: null },
+                orderBy: { email: 'asc' },
+            });
+            setAdmins(list);
+        } catch (error) {
             console.error("Error fetching admins: ", error);
             Alert.alert("Error", "Could not fetch admin list.");
-        });
+        }
+    };
 
-        // Cleanup subscription on unmount
-        return () => unsubscribe();
+    useEffect(() => {
+        fetchAdmins();
     }, []);
 
     const handleDelete = (user: User) => {
@@ -42,9 +38,11 @@ const AdminAccScreen = () => {
                     style: 'destructive',
                     onPress: async () => {
                         try {
-                            const userDoc = doc(db, 'users', user.id);
-                            await updateDoc(userDoc, { deletedAt: serverTimestamp() });
-                            // No need to call fetchUsers() anymore, onSnapshot will handle the update
+                            await prisma.user.update({
+                                where: { id: user.id },
+                                data: { deletedAt: new Date() },
+                            });
+                            fetchAdmins();
                         } catch (error) {
                             console.error("Error deleting admin: ", error);
                             Alert.alert("Error", "Could not delete admin.");
@@ -72,7 +70,7 @@ const AdminAccScreen = () => {
             <FlatList
                 data={admins}
                 renderItem={renderUserItem}
-                keyExtractor={item => item.id}
+                keyExtractor={item => item.id.toString()}
                 ListEmptyComponent={<Text style={styles.emptyText}>No admin users found.</Text>}
             />
         </View>

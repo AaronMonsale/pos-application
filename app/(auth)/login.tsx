@@ -1,10 +1,10 @@
 import { useRouter } from "expo-router";
-import { signInWithEmailAndPassword } from "firebase/auth";
-import { collection, doc, getDoc, getDocs, limit, query } from "firebase/firestore";
 import React, { useEffect, useState } from "react";
 import { Alert, Image, StyleSheet, Text, TextInput, TouchableOpacity, View } from "react-native";
 import { Colors } from '../../constants/theme';
-import { auth, db } from "../../firebase";
+import { PrismaClient } from '@prisma/client';
+
+const prisma = new PrismaClient();
 
 const Login = () => {
   const [email, setEmail] = useState("");
@@ -15,10 +15,8 @@ const Login = () => {
   useEffect(() => {
     const checkUsers = async () => {
       try {
-        const usersCollection = collection(db, "users");
-        const q = query(usersCollection, limit(1));
-        const snapshot = await getDocs(q);
-        if (snapshot.empty) {
+        const userCount = await prisma.user.count();
+        if (userCount === 0) {
           setShowRegisterButton(true);
         }
       } catch (error) {
@@ -32,29 +30,21 @@ const Login = () => {
 
   const handleLogin = async () => {
     try {
-      const userCredential = await signInWithEmailAndPassword(
-        auth,
-        email,
-        password
-      );
-      const user = userCredential.user;
+      const user = await prisma.user.findUnique({
+        where: { email },
+      });
 
-      // Get user role from Firestore
-      const docRef = doc(db, "users", user.uid);
-      const docSnap = await getDoc(docRef);
-
-      if (docSnap.exists()) {
-        const userData = docSnap.data();
+      if (user && user.password === password) {
         // Role-based redirection
-        if (userData.role === "admin") {
+        if (user.role === "ADMIN") {
           router.replace("/(main)/admin");
-        } else if (userData.role === "Kitchen") {
+        } else if (user.role === "KITCHEN") {
           router.replace("/(main)/kitchen");
         } else {
           router.replace("/(main)/tables");
         }
       } else {
-        Alert.alert("Error", "User data not found!");
+        Alert.alert("Error", "Invalid email or password");
       }
     } catch (error: any) {
       Alert.alert("Error", error.message);

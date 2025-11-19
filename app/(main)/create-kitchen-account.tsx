@@ -1,11 +1,11 @@
 
-import { createUserWithEmailAndPassword } from "firebase/auth";
-import { doc, setDoc } from "firebase/firestore";
 import { useRouter } from "expo-router";
 import React, { useState } from "react";
 import { Alert, StyleSheet, Text, TextInput, TouchableOpacity, View } from "react-native";
-import { auth, db } from "../../firebase";
+import { PrismaClient } from "@prisma/client";
 import { Colors } from "../../constants/theme";
+
+const prisma = new PrismaClient();
 
 const CreateKitchenAccountScreen = () => {
     const [email, setEmail] = useState('');
@@ -19,15 +19,12 @@ const CreateKitchenAccountScreen = () => {
         }
 
         try {
-            // Create user in Firebase Authentication
-            const userCredential = await createUserWithEmailAndPassword(auth, email, password);
-            const user = userCredential.user;
-
-            // Add user details to Firestore with the role "Kitchen"
-            await setDoc(doc(db, "users", user.uid), {
-                email: user.email,
-                role: "Kitchen", // Automatically assign the "Kitchen" role
-                createdAt: new Date(),
+            await prisma.user.create({
+                data: {
+                    email,
+                    password, // Storing password in plain text, consider hashing in a real application
+                    role: "KITCHEN",
+                },
             });
 
             Alert.alert("Account Created", `The kitchen account for ${email} has been successfully created.`);

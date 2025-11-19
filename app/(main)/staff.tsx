@@ -1,17 +1,13 @@
 
 import { Ionicons } from '@expo/vector-icons';
-import { addDoc, collection, deleteDoc, doc, getDocs, updateDoc, query, where, serverTimestamp } from 'firebase/firestore';
+import { PrismaClient, User } from '@prisma/client';
 import React, { useEffect, useState } from 'react';
 import { Alert, FlatList, Modal, StyleSheet, Text, TextInput, TouchableOpacity, TouchableWithoutFeedback, View } from 'react-native';
 import { Colors } from '../../constants/theme';
-import { db } from '../../firebase';
 
-interface Staff {
-    id: string;
-    name: string;
-    pin: string;
-    deletedAt?: Date | null;
-}
+const prisma = new PrismaClient();
+
+interface Staff extends User {}
 
 const StaffManagementScreen = () => {
     const [modalVisible, setModalVisible] = useState(false);
@@ -26,9 +22,10 @@ const StaffManagementScreen = () => {
 
     const fetchStaff = async () => {
         try {
-            const staffCollection = query(collection(db, 'staff'), where("deletedAt", "==", null));
-            const staffSnapshot = await getDocs(staffCollection);
-            const list = staffSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Staff)).sort((a, b) => a.name.localeCompare(b.name));
+            const list = await prisma.user.findMany({
+                where: { role: 'USER', deletedAt: null },
+                orderBy: { name: 'asc' },
+            });
             setStaffList(list);
         } catch (error) {
             console.error("Error fetching staff: ", error);
@@ -48,10 +45,12 @@ const StaffManagementScreen = () => {
 
         try {
             if (editingStaff) {
-                const staffDoc = doc(db, 'staff', editingStaff.id);
-                await updateDoc(staffDoc, { name: staffName, pin: staffPin });
+                await prisma.user.update({
+                    where: { id: editingStaff.id },
+                    data: { name: staffName, pin: staffPin },
+                });
             } else {
-                await addDoc(collection(db, 'staff'), { name: staffName, pin: staffPin, deletedAt: null });
+                await prisma.user.create({ data: { name: staffName, pin: staffPin, email: `${staffName.replace(/\s/g, '').toLowerCase()}@onecore.com`, password: 'password' } });
             }
             closeModal();
             fetchStaff();
@@ -63,8 +62,8 @@ const StaffManagementScreen = () => {
 
     const handleEdit = (staff: Staff) => {
         setEditingStaff(staff);
-        setStaffName(staff.name);
-        setStaffPin(staff.pin);
+        setStaffName(staff.name || '');
+        setStaffPin(staff.pin || '');
         setModalVisible(true);
     };
 
@@ -79,8 +78,10 @@ const StaffManagementScreen = () => {
                     style: 'destructive',
                     onPress: async () => {
                         try {
-                            const staffDoc = doc(db, 'staff', staff.id);
-                            await updateDoc(staffDoc, { deletedAt: serverTimestamp() });
+                            await prisma.user.update({
+                                where: { id: staff.id },
+                                data: { deletedAt: new Date() },
+                            });
                             fetchStaff();
                         } catch (error) {
                             console.error("Error deleting staff: ", error);
@@ -129,7 +130,7 @@ const StaffManagementScreen = () => {
             <FlatList
                 data={staffList}
                 renderItem={renderStaffItem}
-                keyExtractor={item => item.id}
+                keyExtractor={item => item.id.toString()}
                 contentContainerStyle={styles.listContainer}
                 ListEmptyComponent={<Text style={styles.emptyText}>No staff members found. Add one to get started.</Text>}
             />

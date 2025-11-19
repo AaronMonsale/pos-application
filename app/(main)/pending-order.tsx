@@ -1,16 +1,15 @@
 
 import { Ionicons } from '@expo/vector-icons';
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import { doc, onSnapshot, updateDoc } from 'firebase/firestore';
 import React, { useEffect, useState } from 'react';
 import { ActivityIndicator, Alert, FlatList, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { db } from '../../firebase';
+import { PrismaClient, OrderItem, Food } from '@prisma/client';
 
-interface OrderItem {
-    food: { name: string; price: number; };
-    quantity: number;
-    note?: string;
+const prisma = new PrismaClient();
+
+interface OrderItemWithFood extends OrderItem {
+    food: Food;
 }
 
 // --- Main Component ---
@@ -18,39 +17,51 @@ const PendingOrderScreen = () => {
     const router = useRouter();
     const { tableId, tableName } = useLocalSearchParams<{ tableId: string, tableName: string }>();
     
-    const [orderItems, setOrderItems] = useState<OrderItem[]>([]);
-    const [orderStatus, setOrderStatus] = useState('pending');
+    const [orderItems, setOrderItems] = useState<OrderItemWithFood[]>([]);
+    const [orderStatus, setOrderStatus] = useState('serving');
     const [kitchenStatus, setKitchenStatus] = useState('pending');
     const [loading, setLoading] = useState(true);
+    const [orderId, setOrderId] = useState<number | null>(null);
 
-    useEffect(() => {
+    const fetchOrder = async () => {
         if (!tableId) {
             Alert.alert("Error", "No table specified.", [{ text: "OK", onPress: () => router.back() }]);
             return;
         }
 
-        const tableDocRef = doc(db, 'tables', tableId);
-        const unsubscribe = onSnapshot(tableDocRef, (docSnap) => {
-            if (docSnap.exists()) {
-                const tableData = docSnap.data();
-                setOrderItems(tableData.order || []);
-                setOrderStatus(tableData.status || 'serving'); // overall status
-                setKitchenStatus(tableData.kitchenStatus || 'pending'); // kitchen-specific status
+        try {
+            const order = await prisma.order.findUnique({
+                where: { tableId: parseInt(tableId, 10) },
+                include: {
+                    items: { include: { food: true } },
+                    table: true,
+                },
+            });
 
-                if (tableData.status === 'available') {
+            if (order) {
+                setOrderItems(order.items || []);
+                setOrderStatus(order.table.status);
+                setKitchenStatus(order.table.kitchenStatus as string);
+                setOrderId(order.id);
+
+                if (order.table.status === 'available') {
                     router.replace('/(main)/tables');
                 }
             } else {
-                Alert.alert("Error", "Table not found.", [{ text: "OK", onPress: () => router.back() }]);
+                Alert.alert("Error", "Order not found.", [{ text: "OK", onPress: () => router.back() }]);
             }
-            setLoading(false);
-        }, (error) => {
+        } catch (error) {
             console.error("Failed to fetch pending order:", error);
             Alert.alert("Error", "Could not load the order.");
+        } finally {
             setLoading(false);
-        });
+        }
+    };
 
-        return () => unsubscribe();
+    useEffect(() => {
+        fetchOrder();
+        const interval = setInterval(fetchOrder, 5000);
+        return () => clearInterval(interval);
     }, [tableId]);
 
     const handleMarkAsServed = async () => {
@@ -59,16 +70,31 @@ const PendingOrderScreen = () => {
             return;
         }
 
+        if (!orderId) {
+            Alert.alert("Error", "Order ID not found.");
+            return;
+        }
+
         try {
-            const tableDocRef = doc(db, 'tables', tableId);
-            await updateDoc(tableDocRef, {
-                status: 'available', 
-                occupied: false,
-                occupiedBy: null,
-                staffId: null,
-                order: [],
-                kitchenStatus: null
-            });
+            // Use a transaction to ensure atomicity
+            await prisma.$transaction([
+                // First, delete all order items associated with the order
+                prisma.orderItem.deleteMany({ where: { orderId: orderId } }),
+                // Then, delete the order itself
+                prisma.order.delete({ where: { id: orderId } }),
+                // Finally, update the table to be available
+                prisma.table.update({
+                    where: { id: parseInt(tableId, 10) },
+                    data: {
+                        status: 'available',
+                        occupied: false,
+                        occupiedBy: null,
+                        staffId: null,
+                        kitchenStatus: null
+                    },
+                })
+            ]);
+
             Alert.alert("Table Cleared", "The table is now available.", [
                 { text: "OK", onPress: () => router.replace('/(main)/tables') }
             ]);
@@ -80,17 +106,17 @@ const PendingOrderScreen = () => {
 
     const getStatusInfo = () => {
         if (orderStatus === 'order_ready') {
-            return { text: 'Ready for Pickup', color: '#28a745', icon: 'checkmark-circle-outline' };
+            return { text: 'Ready for Pickup', color: '#28a745', icon: 'checkmark-circle-outline' as const };
         }
         if (kitchenStatus === 'in_progress') {
-            return { text: 'In Progress', color: '#17a2b8', icon: 'hourglass-outline' };
+            return { text: 'In Progress', color: '#17a2b8', icon: 'hourglass-outline' as const };
         }
-        return { text: 'Pending in Kitchen', color: '#ffc107', icon: 'time-outline' };
+        return { text: 'Pending in Kitchen', color: '#ffc107', icon: 'time-outline' as const };
     };
     
     const statusInfo = getStatusInfo();
 
-    const renderOrderItem = ({ item }: { item: OrderItem }) => (
+    const renderOrderItem = ({ item }: { item: OrderItemWithFood }) => (
         <View style={styles.itemCard}>
             <Text style={styles.itemQuantity}>{item.quantity}x</Text>
             <View style={styles.itemDetails}>
@@ -114,7 +140,7 @@ const PendingOrderScreen = () => {
             </View>
 
             <View style={styles.statusContainer}>
-                <Ionicons name={statusInfo.icon as any} size={30} color={statusInfo.color} />
+                <Ionicons name={statusInfo.icon} size={30} color={statusInfo.color} />
                 <Text style={[styles.statusText, { color: statusInfo.color }]}>{statusInfo.text}</Text>
             </View>
 
